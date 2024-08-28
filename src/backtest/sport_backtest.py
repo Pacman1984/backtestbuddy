@@ -4,7 +4,9 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from sklearn.model_selection import TimeSeriesSplit
 
-from src.strategies.base import BaseStrategy, FixedStake, get_default_strategy
+from src.strategies.sport_strategies import BaseStrategy, FixedStake, get_default_strategy
+from src.metrics.sport_metrics import calculate_all_metrics
+from src.plots.sport_plots import plot_backtest
 
 
 class BaseBacktest(ABC):
@@ -18,6 +20,7 @@ class BaseBacktest(ABC):
         data (pd.DataFrame): The dataset to be used for backtesting.
         odds_columns (List[str]): The names of the columns containing odds for each outcome.
         outcome_column (str): The name of the column containing the actual outcomes.
+        date_column (str): The name of the column containing the date information.
         initial_bankroll (float): The initial bankroll for the simulation.
         model (Optional[Any]): The model to be used for predictions, if applicable.
         strategy (BaseStrategy): The betting strategy to be used.
@@ -29,6 +32,7 @@ class BaseBacktest(ABC):
                  data: pd.DataFrame, 
                  odds_columns: List[str],
                  outcome_column: str,
+                 date_column: str,
                  initial_bankroll: float = 1000.0,
                  model: Optional[Any] = None, 
                  strategy: Optional[BaseStrategy] = None, 
@@ -40,6 +44,7 @@ class BaseBacktest(ABC):
             data (pd.DataFrame): The dataset to be used for backtesting.
             odds_columns (List[str]): The names of the columns containing odds for each outcome.
             outcome_column (str): The name of the column containing the actual outcomes.
+            date_column (str): The name of the column containing the date information.
             initial_bankroll (float): The initial bankroll for the simulation. Defaults to 1000.0.
             model (Optional[Any], optional): The model to be used for predictions. Defaults to None.
             strategy (Optional[BaseStrategy], optional): The betting strategy to be used. 
@@ -47,14 +52,17 @@ class BaseBacktest(ABC):
             cv_schema (Optional[Any], optional): The cross-validation schema to be used. 
                 Defaults to TimeSeriesSplit with 5 splits if None is provided.
         """
-        self.data = data
+        self.data = data.sort_values(date_column).reset_index(drop=True)
         self.odds_columns = odds_columns
         self.outcome_column = outcome_column
+        self.date_column = date_column
         self.initial_bankroll = initial_bankroll
         self.model = model
         self.strategy = strategy if strategy is not None else get_default_strategy()
         self.cv_schema = cv_schema if cv_schema is not None else TimeSeriesSplit(n_splits=5)
         self.detailed_results: Optional[pd.DataFrame] = None
+        self.bookie_results: Optional[pd.DataFrame] = None
+        self.metrics: Optional[Dict[str, Any]] = None
 
     @abstractmethod
     def run(self) -> None:
@@ -68,6 +76,7 @@ class BaseBacktest(ABC):
             NotImplementedError: If the method is not implemented by a subclass.
         """
         pass
+
 
     def get_detailed_results(self) -> pd.DataFrame:
         """
@@ -83,7 +92,20 @@ class BaseBacktest(ABC):
             raise ValueError("Backtest has not been run yet. Call run() first.")
         return self.detailed_results
 
-        
+    def get_bookie_results(self) -> pd.DataFrame:
+        """
+        Get the results of the bookie strategy simulation.
+
+        Returns:
+            pd.DataFrame: A DataFrame containing the results of the bookie strategy simulation.
+
+        Raises:
+            ValueError: If the backtest has not been run yet.
+        """
+        if self.bookie_results is None:
+            raise ValueError("Backtest has not been run yet. Call run() first.")
+        return self.bookie_results
+
     def _simulate_bet(self, fold: int, index: int, prediction: int, actual_outcome: int, odds: List[float], current_bankroll: float, **kwargs: Any) -> Dict[str, Any]:
         """
         Process a bet by placing it, simulating its outcome, and generating the result.
@@ -91,20 +113,40 @@ class BaseBacktest(ABC):
         Args:
             fold (int): The current fold number.
             index (int): The index of the current data point.
-            prediction (int): The predicted outcome.
-            actual_outcome (int): The actual outcome.
-            odds (List[float]): The odds for each outcome.
+            prediction (int): The predicted outcome index (0-based).
+            actual_outcome (int): The actual outcome index (0-based).
+            odds (List[float]): The odds for each possible outcome, aligned with prediction/outcome indices.
             current_bankroll (float): The current bankroll before placing the bet.
             **kwargs: Additional data that might be used in custom betting strategies.
 
-
         Returns:
-            Dict[str, Any]: A dictionary containing all the result information, including bet details and outcomes.
-                keys: 'bt_index', 'bt_fold', 'bt_predicted_outcome', 'bt_actual_outcome', 'bt_starting_bankroll', 
-                'bt_ending_bankroll', 'bt_stake', 'bt_potential_return', 'bt_win', 'bt_profit', 'bt_roi'
+            Dict[str, Any]: A dictionary containing all the result information, including:
+                'bt_index': Index of the current data point.
+                'bt_fold': Current fold number.
+                'bt_predicted_outcome': Predicted outcome index.
+                'bt_actual_outcome': Actual outcome index.
+                'bt_starting_bankroll': Bankroll before the bet.
+                'bt_ending_bankroll': Bankroll after the bet.
+                'bt_stake': Amount staked on the bet.
+                'bt_potential_return': Potential return if the bet wins.
+                'bt_win': Boolean indicating if the bet won.
+                'bt_profit': Profit (positive) or loss (negative) from the bet.
+                'bt_roi': Return on Investment as a percentage.
+                'bt_odds': The odds for the predicted outcome.
+
+        Example:
+            For a 2-way betting event (e.g., tennis match):
+            odds = [2.0, 1.8]  # [player1_win_odds, player2_win_odds]
+            prediction = 0  # Predicting player 1 to win
+            actual_outcome = 1  # Player 2 actually won
+
+            For a 3-way betting event (e.g., football match):
+            odds = [2.5, 3.0, 2.8]  # [home_win_odds, draw_odds, away_win_odds]
+            prediction = 1  # Predicting a draw
+            actual_outcome = 0  # Home team actually won
         """
         # Place the bet
-        stake = self.strategy.calculate_stake(odds[prediction], current_bankroll, **kwargs) # Calculate stake based on the strategy
+        stake = self.strategy.calculate_stake(odds[prediction], current_bankroll, **kwargs)
         potential_return = stake * odds[prediction]
         bet = {"bt_stake": stake, "bt_potential_return": potential_return}
 
@@ -133,50 +175,87 @@ class BaseBacktest(ABC):
             'bt_actual_outcome': actual_outcome,
             'bt_starting_bankroll': current_bankroll,
             'bt_ending_bankroll': ending_bankroll,
+            'bt_odds': odds[prediction],
+            'bt_date_column': self.data.iloc[index][self.date_column],  # Add this line
             **bet,
             **outcome
         }
 
         return result
 
+
     def calculate_metrics(self) -> Dict[str, Any]:
         """
         Calculate performance metrics based on the backtest results.
+        """
+        if self.detailed_results is None:
+            raise ValueError("Backtest results are not available. Make sure to run the backtest first.")
+        
+        self.metrics = calculate_all_metrics(self.detailed_results)
+        return self.metrics
 
-        This method computes relevant performance metrics after the backtest has been run.
-        It assumes that self.results has been populated by the run() method.
+    def plot(self):
+        """
+        Generate and display a plot of the backtest results.
 
-        Returns:
-            Dict[str, Any]: A dictionary containing the calculated metrics.
+        This method creates a plot showing the bankroll over time, 
+        win/loss markers, and ROI for each bet.
 
         Raises:
-            ValueError: If calculate_metrics is called before run() or if results are empty.
+            ValueError: If the backtest has not been run yet.
         """
-        if self.results is None:
-            raise ValueError("Backtest results are not available. Make sure to run the backtest first.")
+        if self.detailed_results is None:
+            raise ValueError("Backtest has not been run yet. Call run() first.")
+        
+        fig = plot_backtest(self)
+        fig.show()
 
-        metrics = {}
+    def _simulate_bookie_bet(self, fold: int, index: int, odds: List[float], actual_outcome: int, current_bankroll: float) -> Dict[str, Any]:
+        """
+        Simulate a bet using the bookie strategy (betting on the outcome with the lowest odds).
 
-        # Calculate ROI
-        initial_bankroll = self.initial_bankroll
-        final_bankroll = self.results['final_bankroll']
-        metrics['ROI'] = ((final_bankroll - initial_bankroll) / initial_bankroll) * 100
+        Args:
+            fold (int): The current fold number.
+            index (int): The index of the current data point.
+            odds (List[float]): The odds for each possible outcome.
+            actual_outcome (int): The actual outcome index (0-based).
+            current_bankroll (float): The current bankroll before placing the bet.
 
-        # Calculate win rate
-        total_bets = self.results['total_bets']
-        winning_bets = self.results['winning_bets']
-        metrics['win_rate'] = (winning_bets / total_bets) * 100 if total_bets else 0
+        Returns:
+            Dict[str, Any]: A dictionary containing the result information for the bookie bet.
+        """
+        prediction = odds.index(min(odds))  # Bet on the outcome with the lowest odds
+        stake = self.strategy.calculate_stake(odds[prediction], current_bankroll)
+        potential_return = stake * odds[prediction]
 
-        # Calculate average odds
-        metrics['average_odds'] = self.results['total_odds'] / total_bets if total_bets else 0
+        if actual_outcome == prediction:
+            win = True
+            profit = potential_return - stake
+            roi = (potential_return - stake) / stake * 100
+        else:
+            win = False
+            profit = -stake
+            roi = -100
 
-        # Calculate profit
-        metrics['total_profit'] = final_bankroll - initial_bankroll
+        ending_bankroll = current_bankroll + profit
 
-        # Calculate average stake
-        metrics['average_stake'] = self.results['total_stake'] / total_bets if total_bets else 0
+        result = {
+            'bt_index': index,
+            'bt_fold': fold,
+            'bt_predicted_outcome': prediction,
+            'bt_actual_outcome': actual_outcome,
+            'bt_starting_bankroll': current_bankroll,
+            'bt_ending_bankroll': ending_bankroll,
+            'bt_stake': stake,
+            'bt_potential_return': potential_return,
+            'bt_win': win,
+            'bt_profit': profit,
+            'bt_roi': roi,
+            'bt_odds': odds[prediction],
+            'bt_date_column': self.data.iloc[index][self.date_column],
+        }
 
-        return metrics
+        return result
 
 
 class ModelBacktest(BaseBacktest):
@@ -195,6 +274,7 @@ class ModelBacktest(BaseBacktest):
                  data: pd.DataFrame,
                  odds_columns: List[str],
                  outcome_column: str,
+                 date_column: str,
                  model: Any,
                  initial_bankroll: float = 1000.0,
                  strategy: Optional[BaseStrategy] = None, 
@@ -206,12 +286,13 @@ class ModelBacktest(BaseBacktest):
             data (pd.DataFrame): The dataset to be used for backtesting.
             odds_columns (List[str]): The names of the columns containing odds for each outcome.
             outcome_column (str): The name of the column containing the actual outcomes.
+            date_column (str): The name of the column containing the date information.
             model (Any): The predictive model to be used.
             initial_bankroll (float): The initial bankroll for the simulation. Defaults to 1000.0.
             strategy (Optional[BaseStrategy], optional): The betting strategy to be used.
             cv_schema (Optional[Any], optional): The cross-validation schema to be used.
         """
-        super().__init__(data, odds_columns, outcome_column, initial_bankroll, model, strategy, cv_schema)
+        super().__init__(data, odds_columns, outcome_column, date_column, initial_bankroll, model, strategy, cv_schema)
 
     def run(self) -> None:
         """
@@ -222,7 +303,9 @@ class ModelBacktest(BaseBacktest):
         and populates self.detailed_results with the outcomes.
         """
         all_results = []
+        bookie_results = []
         current_bankroll = self.initial_bankroll
+        bookie_bankroll = self.initial_bankroll
 
         for fold, (train_index, test_index) in enumerate(self.cv_schema.split(self.data)):
             X_train, X_test = self.data.iloc[train_index], self.data.iloc[test_index]
@@ -239,15 +322,24 @@ class ModelBacktest(BaseBacktest):
                 odds = X_test.iloc[i][self.odds_columns].tolist()
                 actual_outcome = y_test.iloc[i]
 
+                # Simulate bet based on prediction
                 result = self._simulate_bet(fold, i, prediction, actual_outcome, odds, current_bankroll)
                 current_bankroll = result['bt_ending_bankroll']
                 
                 # Add all original features to the result
                 result.update(X_test.iloc[i].to_dict())
-
                 all_results.append(result)
 
+                # Simulate bookie bet
+                bookie_result = self._simulate_bookie_bet(fold, i, odds, actual_outcome, bookie_bankroll)
+                bookie_bankroll = bookie_result['bt_ending_bankroll']
+                
+                # Add all original features to the bookie result
+                bookie_result.update(X_test.iloc[i].to_dict())
+                bookie_results.append(bookie_result)
+
         self.detailed_results = pd.DataFrame(all_results)
+        self.bookie_results = pd.DataFrame(bookie_results)
 
 
 class PredictionBacktest(BaseBacktest):
@@ -266,6 +358,7 @@ class PredictionBacktest(BaseBacktest):
                  data: pd.DataFrame,
                  odds_columns: List[str],
                  outcome_column: str,
+                 date_column: str,
                  prediction_column: str,
                  initial_bankroll: float = 1000.0,
                  strategy: Optional[BaseStrategy] = None, 
@@ -277,28 +370,31 @@ class PredictionBacktest(BaseBacktest):
             data (pd.DataFrame): The dataset to be used for backtesting. Should include pre-computed predictions.
             odds_columns (List[str]): The names of the columns containing odds for each outcome.
             outcome_column (str): The name of the column containing the actual outcomes.
+            date_column (str): The name of the column containing the date information.
             prediction_column (str): The name of the column in the dataset that contains the predictions.
             initial_bankroll (float): The initial bankroll for the simulation. Defaults to 1000.0.
             strategy (Optional[BaseStrategy], optional): The betting strategy to be used.
             cv_schema (Optional[Any], optional): The cross-validation schema to be used. 
                 Defaults to None, which will use TimeSeriesSplit with 5 splits.
         """
-        super().__init__(data, odds_columns, outcome_column, initial_bankroll, None, strategy, cv_schema)
+        super().__init__(data, odds_columns, outcome_column, date_column, initial_bankroll, None, strategy, cv_schema)
         self.prediction_column = prediction_column
 
     def run(self) -> None:
         """
-        Run the prediction-based backtest.
+        Run the prediction-based backtest and bookie simulation.
 
-        This method implements the backtesting logic for a strategy based on pre-computed predictions.
-        It applies the betting strategy to the predictions in the specified column of the dataset
-        and populates self.detailed_results with the outcomes.
+        This method implements the backtesting logic for a strategy based on pre-computed predictions
+        and also simulates a bookie strategy. It populates self.detailed_results with the outcomes
+        of the prediction-based strategy and self.bookie_results with the outcomes of the bookie strategy.
         """
         if self.prediction_column not in self.data.columns:
             raise ValueError(f"Prediction column '{self.prediction_column}' not found in the dataset.")
 
         all_results = []
+        bookie_results = []
         current_bankroll = self.initial_bankroll
+        bookie_bankroll = self.initial_bankroll
 
         for fold, (_, test_index) in enumerate(self.cv_schema.split(self.data)):
             X_test = self.data.iloc[test_index]
@@ -308,12 +404,21 @@ class PredictionBacktest(BaseBacktest):
                 actual_outcome = row[self.outcome_column]
                 odds = row[self.odds_columns].tolist()
 
+                # Simulate bet based on prediction
                 result = self._simulate_bet(fold, i, prediction, actual_outcome, odds, current_bankroll)
-                current_bankroll = result['bt_ending_bankroll'] # Update current bankroll for next bet in the loop
+                current_bankroll = result['bt_ending_bankroll']
                 
                 # Add all original features to the result
                 result.update(row.to_dict())
-
                 all_results.append(result)
 
+                # Simulate bookie bet
+                bookie_result = self._simulate_bookie_bet(fold, i, odds, actual_outcome, bookie_bankroll)
+                bookie_bankroll = bookie_result['bt_ending_bankroll']
+                
+                # Add all original features to the bookie result
+                bookie_result.update(row.to_dict())
+                bookie_results.append(bookie_result)
+
         self.detailed_results = pd.DataFrame(all_results)
+        self.bookie_results = pd.DataFrame(bookie_results)

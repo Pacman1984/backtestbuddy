@@ -2,11 +2,13 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+import plotly.graph_objects as go
 from sklearn.model_selection import TimeSeriesSplit
 
-from src.strategies.sport_strategies import BaseStrategy, FixedStake, get_default_strategy
 from src.metrics.sport_metrics import calculate_all_metrics
-from src.plots.sport_plots import plot_backtest
+from src.plots.sport_plots import plot_backtest, plot_odds_histogram
+from src.strategies.sport_strategies import (BaseStrategy, FixedStake,
+                                             get_default_strategy)
 
 
 class BaseBacktest(ABC):
@@ -209,6 +211,18 @@ class BaseBacktest(ABC):
         
         fig = plot_backtest(self)
         fig.show()
+
+    def plot_odds_distribution(self, num_bins: Optional[int] = None) -> go.Figure:
+        """
+        Generate a histogram plot of the odds distribution for the main strategy.
+        
+        Args:
+            num_bins (Optional[int]): The number of bins to use for the histogram. If None, an automatic binning strategy is used.
+        
+        Returns:
+            go.Figure: A Plotly figure object containing the odds histogram.
+        """
+        return plot_odds_histogram(self, num_bins)
 
     def _simulate_bookie_bet(self, fold: int, index: int, odds: List[float], actual_outcome: int, current_bankroll: float) -> Dict[str, Any]:
         """

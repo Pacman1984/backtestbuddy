@@ -1,13 +1,14 @@
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from typing import Any
+import numpy as np
 
 def plot_backtest(backtest: Any) -> go.Figure:
     """
-    Create a plot of the backtest results, including the bookie strategy.
+    Create a plot of the backtest results, including the bookie strategy and Max Drawdown.
 
     This function generates a plot with three subplots:
-    1. Bankroll over time for both the main strategy and the Bookie strategy.
+    1. Bankroll over time for both the main strategy and the Bookie strategy, with Max Drawdown highlighted.
     2. ROI for each bet for the main strategy.
     3. ROI for each bet for the bookie strategy.
 
@@ -41,6 +42,23 @@ def plot_backtest(backtest: Any) -> go.Figure:
     fig.add_trace(go.Scatter(x=bookie_results['bt_date_column'], 
                              y=bookie_results['bt_ending_bankroll'], 
                              mode='lines', name='Bookie Strategy Bankroll'), row=1, col=1)
+
+    # Calculate and highlight Max Drawdown for main strategy
+    cummax = np.maximum.accumulate(main_results['bt_ending_bankroll'])
+    drawdown = (cummax - main_results['bt_ending_bankroll']) / cummax
+    max_drawdown = np.max(drawdown)
+    max_drawdown_end = np.argmax(drawdown)
+    max_drawdown_start = np.argmax(main_results['bt_ending_bankroll'][:max_drawdown_end])
+
+    fig.add_vrect(
+        x0=main_results['bt_date_column'].iloc[max_drawdown_start],
+        x1=main_results['bt_date_column'].iloc[max_drawdown_end],
+        fillcolor="rgba(255, 0, 0, 0.2)", opacity=0.5,
+        layer="below", line_width=0,
+        annotation_text=f"Max Drawdown: {max_drawdown:.2%}",
+        annotation_position="top left",
+        row=1, col=1
+    )
 
     # Plot ROI for each bet for main strategy
     fig.add_trace(go.Scatter(x=main_results['bt_date_column'], 

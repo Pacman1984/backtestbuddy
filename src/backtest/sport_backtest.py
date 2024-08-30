@@ -348,6 +348,10 @@ class PredictionBacktest(BaseBacktest):
 
     This class implements the backtesting logic for strategies where predictions
     are already available in the dataset, and only the betting strategy needs to be applied.
+    Unlike the ModelBacktest, this class doesn't use cross-validation (cv_schema) because:
+    1. The predictions are pre-computed, so there's no need to train a model on different folds.
+    2. We assume the predictions were generated using appropriate methods to avoid look-ahead bias.
+    3. The entire dataset can be used sequentially, simulating a real-world betting scenario.
 
     Attributes:
         Inherits all attributes from BaseBacktest.
@@ -361,10 +365,13 @@ class PredictionBacktest(BaseBacktest):
                  date_column: str,
                  prediction_column: str,
                  initial_bankroll: float = 1000.0,
-                 strategy: Optional[BaseStrategy] = None, 
-                 cv_schema: Optional[Any] = None):
+                 strategy: Optional[BaseStrategy] = None):
         """
         Initialize the PredictionBacktester.
+
+        This initializer doesn't include a cv_schema parameter because the PredictionBacktest
+        doesn't require cross-validation. The predictions are assumed to be pre-computed correctly,
+        taking into account any necessary time-based splits or other methodologies to prevent data leakage.
 
         Args:
             data (pd.DataFrame): The dataset to be used for backtesting. Should include pre-computed predictions.
@@ -374,10 +381,8 @@ class PredictionBacktest(BaseBacktest):
             prediction_column (str): The name of the column in the dataset that contains the predictions.
             initial_bankroll (float): The initial bankroll for the simulation. Defaults to 1000.0.
             strategy (Optional[BaseStrategy], optional): The betting strategy to be used.
-            cv_schema (Optional[Any], optional): The cross-validation schema to be used. 
-                Defaults to None, which will use TimeSeriesSplit with 5 splits.
         """
-        super().__init__(data, odds_columns, outcome_column, date_column, initial_bankroll, None, strategy, cv_schema)
+        super().__init__(data, odds_columns, outcome_column, date_column, initial_bankroll, None, strategy, None)
         self.prediction_column = prediction_column
 
     def run(self) -> None:
@@ -387,6 +392,17 @@ class PredictionBacktest(BaseBacktest):
         This method implements the backtesting logic for a strategy based on pre-computed predictions
         and also simulates a bookie strategy. It populates self.detailed_results with the outcomes
         of the prediction-based strategy and self.bookie_results with the outcomes of the bookie strategy.
+
+        Unlike the ModelBacktest, this method doesn't use cross-validation splits. Instead, it processes
+        the entire dataset sequentially, which is appropriate when:
+        1. Predictions are pre-computed and assumed to be generated without look-ahead bias.
+        2. We want to simulate a continuous betting scenario, where each bet is placed based on
+           information available up to that point in time.
+        3. The dataset is already arranged in chronological order, representing the actual sequence
+           of betting opportunities.
+
+        This approach allows for a more realistic simulation of a betting strategy's performance
+        over time, as it would be applied in a real-world scenario.
         """
         if self.prediction_column not in self.data.columns:
             raise ValueError(f"Prediction column '{self.prediction_column}' not found in the dataset.")
@@ -396,29 +412,26 @@ class PredictionBacktest(BaseBacktest):
         current_bankroll = self.initial_bankroll
         bookie_bankroll = self.initial_bankroll
 
-        for fold, (_, test_index) in enumerate(self.cv_schema.split(self.data)):
-            X_test = self.data.iloc[test_index]
+        for i, row in self.data.iterrows():
+            prediction = row[self.prediction_column]
+            actual_outcome = row[self.outcome_column]
+            odds = row[self.odds_columns].tolist()
 
-            for i, row in X_test.iterrows():
-                prediction = row[self.prediction_column]
-                actual_outcome = row[self.outcome_column]
-                odds = row[self.odds_columns].tolist()
+            # Simulate bet based on prediction
+            result = self._simulate_bet(0, i, prediction, actual_outcome, odds, current_bankroll)
+            current_bankroll = result['bt_ending_bankroll']
+            
+            # Add all original features to the result
+            result.update(row.to_dict())
+            all_results.append(result)
 
-                # Simulate bet based on prediction
-                result = self._simulate_bet(fold, i, prediction, actual_outcome, odds, current_bankroll)
-                current_bankroll = result['bt_ending_bankroll']
-                
-                # Add all original features to the result
-                result.update(row.to_dict())
-                all_results.append(result)
-
-                # Simulate bookie bet
-                bookie_result = self._simulate_bookie_bet(fold, i, odds, actual_outcome, bookie_bankroll)
-                bookie_bankroll = bookie_result['bt_ending_bankroll']
-                
-                # Add all original features to the bookie result
-                bookie_result.update(row.to_dict())
-                bookie_results.append(bookie_result)
+            # Simulate bookie bet
+            bookie_result = self._simulate_bookie_bet(0, i, odds, actual_outcome, bookie_bankroll)
+            bookie_bankroll = bookie_result['bt_ending_bankroll']
+            
+            # Add all original features to the bookie result
+            bookie_result.update(row.to_dict())
+            bookie_results.append(bookie_result)
 
         self.detailed_results = pd.DataFrame(all_results)
         self.bookie_results = pd.DataFrame(bookie_results)

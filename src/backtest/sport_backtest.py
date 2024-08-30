@@ -307,15 +307,18 @@ class ModelBacktest(BaseBacktest):
         current_bankroll = self.initial_bankroll
         bookie_bankroll = self.initial_bankroll
 
+        # Define feature columns, excluding date and outcome columns
+        feature_columns = [col for col in self.data.columns if col not in [self.date_column, self.outcome_column]]
+
         for fold, (train_index, test_index) in enumerate(self.cv_schema.split(self.data)):
             X_train, X_test = self.data.iloc[train_index], self.data.iloc[test_index]
             y_train, y_test = X_train[self.outcome_column], X_test[self.outcome_column]
 
-            # Train the model (including odds columns as features)
-            self.model.fit(X_train.drop([self.outcome_column], axis=1), y_train)
+            # Train the model using only feature columns
+            self.model.fit(X_train[feature_columns], y_train)
 
-            # Make predictions (including odds columns as features)
-            predictions = self.model.predict(X_test.drop([self.outcome_column], axis=1))
+            # Make predictions using only feature columns
+            predictions = self.model.predict(X_test[feature_columns])
 
             # Simulate bets
             for i, prediction in enumerate(predictions):
@@ -323,7 +326,7 @@ class ModelBacktest(BaseBacktest):
                 actual_outcome = y_test.iloc[i]
 
                 # Simulate bet based on prediction
-                result = self._simulate_bet(fold, i, prediction, actual_outcome, odds, current_bankroll)
+                result = self._simulate_bet(fold, test_index[i], prediction, actual_outcome, odds, current_bankroll)
                 current_bankroll = result['bt_ending_bankroll']
                 
                 # Add all original features to the result
@@ -331,7 +334,7 @@ class ModelBacktest(BaseBacktest):
                 all_results.append(result)
 
                 # Simulate bookie bet
-                bookie_result = self._simulate_bookie_bet(fold, i, odds, actual_outcome, bookie_bankroll)
+                bookie_result = self._simulate_bookie_bet(fold, test_index[i], odds, actual_outcome, bookie_bankroll)
                 bookie_bankroll = bookie_result['bt_ending_bankroll']
                 
                 # Add all original features to the bookie result
@@ -381,8 +384,15 @@ class PredictionBacktest(BaseBacktest):
             prediction_column (str): The name of the column in the dataset that contains the predictions.
             initial_bankroll (float): The initial bankroll for the simulation. Defaults to 1000.0.
             strategy (Optional[BaseStrategy], optional): The betting strategy to be used.
+
+        Raises:
+            ValueError: If the specified prediction_column is not found in the dataset.
         """
         super().__init__(data, odds_columns, outcome_column, date_column, initial_bankroll, None, strategy, None)
+        
+        if prediction_column not in data.columns:
+            raise ValueError(f"Prediction column '{prediction_column}' not found in the dataset.")
+        
         self.prediction_column = prediction_column
 
     def run(self) -> None:
@@ -404,9 +414,6 @@ class PredictionBacktest(BaseBacktest):
         This approach allows for a more realistic simulation of a betting strategy's performance
         over time, as it would be applied in a real-world scenario.
         """
-        if self.prediction_column not in self.data.columns:
-            raise ValueError(f"Prediction column '{self.prediction_column}' not found in the dataset.")
-
         all_results = []
         bookie_results = []
         current_bankroll = self.initial_bankroll

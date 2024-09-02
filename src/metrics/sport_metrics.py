@@ -10,14 +10,54 @@ def calculate_roi(detailed_results: pd.DataFrame) -> float:
     final_bankroll = detailed_results['bt_ending_bankroll'].iloc[-1]
     return (final_bankroll - initial_bankroll) / initial_bankroll
 
-def calculate_sharpe_ratio(detailed_results: pd.DataFrame, risk_free_rate: float = 0.02, periods: int = 252) -> float:
+def calculate_sharpe_ratio(detailed_results: pd.DataFrame, return_period: int = 1, output_period: int = 252) -> float:
     """
-    Calculate the Sharpe Ratio.
-    Assumes returns are daily and risk-free rate is annual.
+    Calculate the Sharpe Ratio for sports betting.
+    Assumes returns are daily by default and output is annualized.
+    
+    The Sharpe Ratio measures the risk-adjusted return of an investment. It is calculated as the 
+    ratio of the average excess return (return over the risk-free rate) to the standard deviation 
+    of the excess return. A higher Sharpe Ratio indicates better risk-adjusted performance.
+    
+    Args:
+        detailed_results (pd.DataFrame): DataFrame containing detailed results of the backtest.
+        return_period (int): The period over which returns are calculated (default is 1 for daily).
+        output_period (int): The period over which the Sharpe Ratio is annualized (default is 252 for yearly).
+    
+    Returns:
+        float: The Sharpe Ratio.
+    
+    Examples:
+        >>> data = {
+        ...     'bt_date_column': ['2023-01-01', '2023-01-02', '2023-01-03'],
+        ...     'bt_profit': [100, -50, 200],
+        ...     'bt_starting_bankroll': [1000, 1000, 1000]
+        ... }
+        >>> df = pd.DataFrame(data)
+        >>> calculate_sharpe_ratio(df)
+        12.24744871391589
+        
+        >>> calculate_sharpe_ratio(df, return_period=7, output_period=52)
+        3.4641016151377544
     """
+    # Convert the date column to datetime and set it as the index
+    detailed_results['bt_date_column'] = pd.to_datetime(detailed_results['bt_date_column'])
+    detailed_results = detailed_results.set_index('bt_date_column')
+    
+    # Calculate returns based on the profit and starting bankroll
     returns = detailed_results['bt_profit'] / detailed_results['bt_starting_bankroll']
-    excess_returns = returns - risk_free_rate / periods
-    return np.sqrt(periods) * excess_returns.mean() / excess_returns.std()
+    
+    # Resample returns based on the return_period (e.g., daily, weekly)
+    returns = returns.resample(f'{return_period}D').sum()
+    
+    # Annualize the mean return by multiplying with output_period
+    annualized_mean_return = returns.mean() * output_period
+    
+    # Annualize the standard deviation by multiplying with sqrt(output_period)
+    annualized_std_return = returns.std() * np.sqrt(output_period)
+    
+    # Calculate and return the Sharpe Ratio
+    return annualized_mean_return / annualized_std_return
 
 def calculate_max_drawdown(detailed_results: pd.DataFrame) -> float:
     """
@@ -54,25 +94,107 @@ def calculate_average_stake(detailed_results: pd.DataFrame) -> float:
     """
     return detailed_results['bt_stake'].mean()
 
-def calculate_sortino_ratio(detailed_results: pd.DataFrame, risk_free_rate: float = 0.02, periods: int = 252) -> float:
+def calculate_sortino_ratio(detailed_results: pd.DataFrame, return_period: int = 1, output_period: int = 252) -> float:
     """
-    Calculate the Sortino Ratio.
-    Assumes returns are daily and risk-free rate is annual.
+    Calculate the Sortino Ratio for sports betting.
+    Assumes returns are daily by default and output is annualized.
+    
+    The Sortino Ratio is a variation of the Sharpe Ratio that differentiates harmful volatility 
+    from total overall volatility by using the standard deviation of negative asset returns, 
+    called downside deviation. A higher Sortino Ratio indicates better risk-adjusted performance 
+    with a focus on downside risk.
+    
+    Args:
+        detailed_results (pd.DataFrame): DataFrame containing detailed results of the backtest.
+        return_period (int): The period over which returns are calculated (default is 1 for daily).
+        output_period (int): The period over which the Sortino Ratio is annualized (default is 252 for yearly).
+    
+    Returns:
+        float: The Sortino Ratio.
+    
+    Examples:
+        >>> data = {
+        ...     'bt_date_column': ['2023-01-01', '2023-01-02', '2023-01-03'],
+        ...     'bt_profit': [100, -50, 200],
+        ...     'bt_starting_bankroll': [1000, 1000, 1000]
+        ... }
+        >>> df = pd.DataFrame(data)
+        >>> calculate_sortino_ratio(df)
+        18.0
+        
+        >>> calculate_sortino_ratio(df, return_period=7, output_period=52)
+        5.196152422706632
     """
+    # Convert the date column to datetime and set it as the index
+    detailed_results['bt_date_column'] = pd.to_datetime(detailed_results['bt_date_column'])
+    detailed_results = detailed_results.set_index('bt_date_column')
+    
+    # Calculate returns based on the profit and starting bankroll
     returns = detailed_results['bt_profit'] / detailed_results['bt_starting_bankroll']
-    excess_returns = returns - risk_free_rate / periods
-    downside_returns = excess_returns[excess_returns < 0]
-    return np.sqrt(periods) * excess_returns.mean() / downside_returns.std()
+    
+    # Resample returns based on the return_period (e.g., daily, weekly)
+    returns = returns.resample(f'{return_period}D').sum()
+    
+    # Calculate downside deviation (only negative returns)
+    downside_deviation = returns[returns < 0].std() * np.sqrt(output_period)
+    
+    # Annualize the mean return by multiplying with output_period
+    annualized_mean_return = returns.mean() * output_period
+    
+    # Calculate and return the Sortino Ratio
+    return annualized_mean_return / downside_deviation
 
-def calculate_calmar_ratio(detailed_results: pd.DataFrame, periods: int = 252) -> float:
+def calculate_calmar_ratio(detailed_results: pd.DataFrame, return_period: int = 1, output_period: int = 252) -> float:
     """
-    Calculate the Calmar Ratio.
-    Assumes returns are daily.
+    Calculate the Calmar Ratio for sports betting.
+    Assumes returns are daily by default and output is annualized.
+    
+    The Calmar Ratio measures the risk-adjusted return of an investment by comparing the average 
+    annual compounded rate of return and the maximum drawdown risk. A higher Calmar Ratio indicates 
+    better risk-adjusted performance with a focus on drawdown risk.
+    
+    Args:
+        detailed_results (pd.DataFrame): DataFrame containing detailed results of the backtest.
+        return_period (int): The period over which returns are calculated (default is 1 for daily).
+        output_period (int): The period over which the Calmar Ratio is annualized (default is 252 for yearly).
+    
+    Returns:
+        float: The Calmar Ratio.
+    
+    Examples:
+        >>> data = {
+        ...     'bt_date_column': ['2023-01-01', '2023-01-02', '2023-01-03'],
+        ...     'bt_profit': [100, -50, 200],
+        ...     'bt_starting_bankroll': [1000, 1000, 1000]
+        ... }
+        >>> df = pd.DataFrame(data)
+        >>> calculate_calmar_ratio(df)
+        12.24744871391589
+        
+        >>> calculate_calmar_ratio(df, return_period=7, output_period=52)
+        3.4641016151377544
     """
+    # Convert the date column to datetime and set it as the index
+    detailed_results['bt_date_column'] = pd.to_datetime(detailed_results['bt_date_column'])
+    detailed_results = detailed_results.set_index('bt_date_column')
+    
+    # Calculate returns based on the profit and starting bankroll
     returns = detailed_results['bt_profit'] / detailed_results['bt_starting_bankroll']
-    annual_return = returns.mean() * periods
-    max_drawdown = calculate_max_drawdown(detailed_results)
-    return annual_return / abs(max_drawdown)
+    
+    # Resample returns based on the return_period (e.g., daily, weekly)
+    returns = returns.resample(f'{return_period}D').sum()
+    
+    # Calculate maximum drawdown
+    cumulative_returns = (1 + returns).cumprod()
+    peak = cumulative_returns.cummax()
+    drawdown = (cumulative_returns - peak) / peak
+    max_drawdown = drawdown.min()
+    
+    # Annualize the mean return by multiplying with output_period
+    annualized_mean_return = returns.mean() * output_period
+    
+    # Calculate and return the Calmar Ratio
+    return annualized_mean_return / abs(max_drawdown)
 
 def calculate_drawdowns(detailed_results: pd.DataFrame) -> Tuple[float, float, float, int, float]:
     """

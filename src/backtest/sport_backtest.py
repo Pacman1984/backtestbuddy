@@ -177,10 +177,10 @@ class BaseBacktest(ABC):
             'bt_actual_outcome': actual_outcome,
             'bt_starting_bankroll': current_bankroll,
             'bt_ending_bankroll': ending_bankroll,
-            'bt_odds': odds[prediction],
-            'bt_date_column': self.data.iloc[index][self.date_column],  # Add this line
+            **outcome,
             **bet,
-            **outcome
+            'bt_odds': odds[prediction],
+            'bt_date_column': self.data.iloc[index][self.date_column],  # Add this line  
         }
 
         return result

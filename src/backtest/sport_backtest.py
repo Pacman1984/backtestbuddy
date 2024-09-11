@@ -65,6 +65,7 @@ class BaseBacktest(ABC):
         self.detailed_results: Optional[pd.DataFrame] = None
         self.bookie_results: Optional[pd.DataFrame] = None
         self.metrics: Optional[Dict[str, Any]] = None
+        self.model_prob_columns: Optional[List[str]] = None
 
     @abstractmethod
     def run(self) -> None:
@@ -108,7 +109,7 @@ class BaseBacktest(ABC):
             raise ValueError("Backtest has not been run yet. Call run() first.")
         return self.bookie_results
 
-    def _simulate_bet(self, fold: int, index: int, prediction: int, actual_outcome: int, odds: List[float], current_bankroll: float, **kwargs: Any) -> Dict[str, Any]:
+    def _simulate_bet(self, fold: int, index: int, prediction: int, actual_outcome: int, odds: List[float], current_bankroll: float, model_probs: Optional[List[float]] = None, **kwargs: Any) -> Dict[str, Any]:
         """
         Process a bet by placing it, simulating its outcome, and generating the result.
 
@@ -119,6 +120,7 @@ class BaseBacktest(ABC):
             actual_outcome (int): The actual outcome index (0-based).
             odds (List[float]): The odds for each possible outcome, aligned with prediction/outcome indices.
             current_bankroll (float): The current bankroll before placing the bet.
+            model_probs (Optional[List[float]]): The model probabilities for each possible outcome.
             **kwargs: Additional data that might be used in custom betting strategies.
 
         Returns:
@@ -135,6 +137,7 @@ class BaseBacktest(ABC):
                 'bt_profit': Profit (positive) or loss (negative) from the bet.
                 'bt_roi': Return on Investment as a percentage.
                 'bt_odds': The odds for the predicted outcome.
+                'bt_model_prob_{i}': The model probability for each possible outcome.
 
         Example:
             For a 2-way betting event (e.g., tennis match):
@@ -182,6 +185,10 @@ class BaseBacktest(ABC):
             'bt_odds': odds[prediction],
             'bt_date_column': self.data.iloc[index][self.date_column],  # Add this line  
         }
+
+        if model_probs:
+            for i, prob in enumerate(model_probs):
+                result[f'bt_model_prob_{i}'] = prob
 
         return result
 
@@ -333,14 +340,14 @@ class ModelBacktest(BaseBacktest):
 
             # Make predictions using only feature columns
             predictions = self.model.predict(X_test[feature_columns])
+            probabilities = self.model.predict_proba(X_test[feature_columns])
 
-            # Simulate bets
-            for i, prediction in enumerate(predictions):
+            for i, (prediction, probs) in enumerate(zip(predictions, probabilities)):
                 odds = X_test.iloc[i][self.odds_columns].tolist()
                 actual_outcome = y_test.iloc[i]
 
                 # Simulate bet based on prediction
-                result = self._simulate_bet(fold, test_index[i], prediction, actual_outcome, odds, current_bankroll)
+                result = self._simulate_bet(fold, test_index[i], prediction, actual_outcome, odds, current_bankroll, model_probs=probs.tolist())
                 current_bankroll = result['bt_ending_bankroll']
                 
                 # Add all original features to the result
@@ -357,6 +364,7 @@ class ModelBacktest(BaseBacktest):
 
         self.detailed_results = pd.DataFrame(all_results)
         self.bookie_results = pd.DataFrame(bookie_results)
+        self.model_prob_columns = [f'bt_model_prob_{i}' for i in range(len(self.odds_columns))]
 
 
 class PredictionBacktest(BaseBacktest):
@@ -382,7 +390,8 @@ class PredictionBacktest(BaseBacktest):
                  date_column: str,
                  prediction_column: str,
                  initial_bankroll: float = 1000.0,
-                 strategy: Optional[BaseStrategy] = None):
+                 strategy: Optional[BaseStrategy] = None,
+                 model_prob_columns: Optional[List[str]] = None):
         """
         Initialize the PredictionBacktester.
 
@@ -398,9 +407,11 @@ class PredictionBacktest(BaseBacktest):
             prediction_column (str): The name of the column in the dataset that contains the predictions.
             initial_bankroll (float): The initial bankroll for the simulation. Defaults to 1000.0.
             strategy (Optional[BaseStrategy], optional): The betting strategy to be used.
+            model_prob_columns (Optional[List[str]], optional): The names of the columns in the dataset that contain the model probabilities.
 
         Raises:
             ValueError: If the specified prediction_column is not found in the dataset.
+            ValueError: If the strategy requires model probabilities but model_prob_columns is not provided.
         """
         super().__init__(data, odds_columns, outcome_column, date_column, initial_bankroll, None, strategy, None)
         
@@ -408,6 +419,15 @@ class PredictionBacktest(BaseBacktest):
             raise ValueError(f"Prediction column '{prediction_column}' not found in the dataset.")
         
         self.prediction_column = prediction_column
+        self.model_prob_columns = model_prob_columns
+
+        # Check if the strategy requires model probabilities
+        if hasattr(self.strategy, 'requires_probabilities') and self.strategy.requires_probabilities:
+            if not model_prob_columns:
+                raise ValueError("The selected strategy requires model probabilities, but model_prob_columns was not provided.")
+            for col in model_prob_columns:
+                if col not in data.columns:
+                    raise ValueError(f"Model probability column '{col}' not found in the dataset.")
 
     def run(self) -> None:
         """
@@ -437,9 +457,10 @@ class PredictionBacktest(BaseBacktest):
             prediction = row[self.prediction_column]
             actual_outcome = row[self.outcome_column]
             odds = row[self.odds_columns].tolist()
+            model_probs = row[self.model_prob_columns].tolist() if self.model_prob_columns else None
 
             # Simulate bet based on prediction
-            result = self._simulate_bet(0, i, prediction, actual_outcome, odds, current_bankroll)
+            result = self._simulate_bet(0, i, prediction, actual_outcome, odds, current_bankroll, model_probs=model_probs)
             current_bankroll = result['bt_ending_bankroll']
             
             # Add all original features to the result

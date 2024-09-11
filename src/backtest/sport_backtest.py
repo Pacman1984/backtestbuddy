@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from sklearn.model_selection import TimeSeriesSplit
@@ -109,65 +110,77 @@ class BaseBacktest(ABC):
             raise ValueError("Backtest has not been run yet. Call run() first.")
         return self.bookie_results
 
-    def _simulate_bet(self, fold: int, index: int, prediction: int, actual_outcome: int, odds: List[float], current_bankroll: float, model_probs: Optional[List[float]] = None, **kwargs: Any) -> Dict[str, Any]:
+    def _simulate_bet(self, fold: int, index: int, prediction: int, bet_on: int, actual_outcome: int, odds: List[float], current_bankroll: float, stake: float, model_probs: Optional[List[float]] = None, **additional_info: Any) -> Dict[str, Any]:
         """
         Process a bet by placing it, simulating its outcome, and generating the result.
 
         Args:
             fold (int): The current fold number.
             index (int): The index of the current data point.
-            prediction (int): The predicted outcome index (0-based).
+            prediction (int): The predicted outcome index.
+            bet_on (int): The index of the outcome to bet on (may differ from prediction).
             actual_outcome (int): The actual outcome index (0-based).
             odds (List[float]): The odds for each possible outcome, aligned with prediction/outcome indices.
             current_bankroll (float): The current bankroll before placing the bet.
-            model_probs (Optional[List[float]]): The model probabilities for each possible outcome.
-            **kwargs: Additional data that might be used in custom betting strategies.
+            stake (float): The stake amount for the bet.
+            model_probs (Optional[List[float]]): The model's predicted probabilities for each outcome.
+            **additional_info: Additional information to be included in the result.
 
         Returns:
             Dict[str, Any]: A dictionary containing all the result information, including:
                 'bt_index': Index of the current data point.
                 'bt_fold': Current fold number.
                 'bt_predicted_outcome': Predicted outcome index.
+                'bt_bet_on': Index of the outcome bet on (may differ from prediction).
                 'bt_actual_outcome': Actual outcome index.
                 'bt_starting_bankroll': Bankroll before the bet.
                 'bt_ending_bankroll': Bankroll after the bet.
                 'bt_stake': Amount staked on the bet.
                 'bt_potential_return': Potential return if the bet wins.
-                'bt_win': Boolean indicating if the bet won.
+                'bt_win': Boolean indicating if the bet won (None if no bet was placed).
                 'bt_profit': Profit (positive) or loss (negative) from the bet.
                 'bt_roi': Return on Investment as a percentage.
-                'bt_odds': The odds for the predicted outcome.
-                'bt_model_prob_{i}': The model probability for each possible outcome.
+                'bt_odds': The odds for the outcome bet on (None if no bet was placed).
+                'bt_odd_{i}': The odds for each possible outcome.
+                'bt_model_prob_{i}': The model probability for each possible outcome (if provided).
+                'bt_date_column': The date of the event from the specified date column.
+                Additional keys from **additional_info will also be included.
 
         Example:
             For a 2-way betting event (e.g., tennis match):
             odds = [2.0, 1.8]  # [player1_win_odds, player2_win_odds]
             prediction = 0  # Predicting player 1 to win
+            bet_on = 0  # Betting on player 1 to win
             actual_outcome = 1  # Player 2 actually won
 
             For a 3-way betting event (e.g., football match):
             odds = [2.5, 3.0, 2.8]  # [home_win_odds, draw_odds, away_win_odds]
             prediction = 1  # Predicting a draw
+            bet_on = 0  # Betting on home team to win
             actual_outcome = 0  # Home team actually won
         """
-        # Place the bet
-        stake = self.strategy.calculate_stake(odds[prediction], current_bankroll, **kwargs)
-        potential_return = stake * odds[prediction]
-        bet = {"bt_stake": stake, "bt_potential_return": potential_return}
-
-        # Simulate the outcome of the bet
-        if actual_outcome == prediction:
+        # Handle the case where stake is 0 or bet_on is -1 (no bet)
+        if stake == 0 or bet_on == -1:
             outcome = {
-                "bt_win": True,
-                "bt_profit": bet["bt_potential_return"] - bet["bt_stake"],
-                "bt_roi": (bet["bt_potential_return"] - bet["bt_stake"]) / bet["bt_stake"] * 100
+                "bt_win": None,
+                "bt_profit": 0,
+                "bt_roi": 0
             }
+            potential_return = 0
         else:
-            outcome = {
-                "bt_win": False,
-                "bt_profit": -bet["bt_stake"],
-                "bt_roi": -100
-            }
+            potential_return = stake * odds[bet_on]
+            if actual_outcome == bet_on:
+                outcome = {
+                    "bt_win": True,
+                    "bt_profit": potential_return - stake,
+                    "bt_roi": (potential_return - stake) / stake * 100
+                }
+            else:
+                outcome = {
+                    "bt_win": False,
+                    "bt_profit": -stake,
+                    "bt_roi": -100
+                }
 
         # Update bankroll
         ending_bankroll = current_bankroll + outcome['bt_profit']
@@ -177,18 +190,28 @@ class BaseBacktest(ABC):
             'bt_index': index,
             'bt_fold': fold,
             'bt_predicted_outcome': prediction,
+            'bt_bet_on': bet_on,
             'bt_actual_outcome': actual_outcome,
             'bt_starting_bankroll': current_bankroll,
             'bt_ending_bankroll': ending_bankroll,
+            'bt_odds': odds[bet_on] if bet_on != -1 else None,
             **outcome,
-            **bet,
-            'bt_odds': odds[prediction],
-            'bt_date_column': self.data.iloc[index][self.date_column],  # Add this line  
+            'bt_stake': stake,
+            'bt_potential_return': potential_return,
+            'bt_date_column': self.data.iloc[index][self.date_column],
         }
+
+        # Add individual odds for each outcome
+        for i, odd in enumerate(odds):
+            result[f'bt_odd_{i}'] = odd
 
         if model_probs:
             for i, prob in enumerate(model_probs):
                 result[f'bt_model_prob_{i}'] = prob
+
+        # Add any additional information as bt_* columns
+        for key, value in additional_info.items():
+            result[f'bt_{key}'] = value
 
         return result
 
@@ -245,36 +268,47 @@ class BaseBacktest(ABC):
         Returns:
             Dict[str, Any]: A dictionary containing the result information for the bookie bet.
         """
-        prediction = odds.index(min(odds))  # Bet on the outcome with the lowest odds
-        stake = self.strategy.calculate_stake(odds[prediction], current_bankroll)
-        potential_return = stake * odds[prediction]
+        # For bookie strategy, we still bet on the lowest odds
+        bet_on = odds.index(min(odds))
+        stake = self.strategy.calculate_stake(odds, current_bankroll)
+        potential_return = stake * odds[bet_on]
 
-        if actual_outcome == prediction:
-            win = True
-            profit = potential_return - stake
-            roi = (potential_return - stake) / stake * 100
+        if stake == 0:
+            win = None
+            profit = 0
+            roi = 0
         else:
-            win = False
-            profit = -stake
-            roi = -100
+            if actual_outcome == bet_on:
+                win = True
+                profit = potential_return - stake
+                roi = (potential_return - stake) / stake * 100
+            else:
+                win = False
+                profit = -stake
+                roi = -100
 
         ending_bankroll = current_bankroll + profit
 
         result = {
             'bt_index': index,
             'bt_fold': fold,
-            'bt_predicted_outcome': prediction,
+            'bt_predicted_outcome': bet_on,  # For bookie strategy, prediction is same as bet_on
+            'bt_bet_on': bet_on,
             'bt_actual_outcome': actual_outcome,
             'bt_starting_bankroll': current_bankroll,
             'bt_ending_bankroll': ending_bankroll,
             'bt_stake': stake,
-            'bt_potential_return': potential_return,
+            'bt_potential_return': potential_return if stake != 0 else 0,
             'bt_win': win,
             'bt_profit': profit,
             'bt_roi': roi,
-            'bt_odds': odds[prediction],
+            'bt_odds': odds[bet_on],  # Add the odds for the bet placed
             'bt_date_column': self.data.iloc[index][self.date_column],
         }
+
+        # Add individual odds for each outcome
+        for i, odd in enumerate(odds):
+            result[f'bt_odd_{i}'] = odd
 
         return result
 
@@ -346,8 +380,18 @@ class ModelBacktest(BaseBacktest):
                 odds = X_test.iloc[i][self.odds_columns].tolist()
                 actual_outcome = y_test.iloc[i]
 
-                # Simulate bet based on prediction
-                result = self._simulate_bet(fold, test_index[i], prediction, actual_outcome, odds, current_bankroll, model_probs=probs.tolist())
+                
+                # Ensure probs match the number of odds
+                if len(probs) != len(odds):
+                    raise ValueError(f"Number of probabilities ({len(probs)}) doesn't match number of odds ({len(odds)})")
+                
+                # Convert probs to a list if it's not already
+                probs_list = probs.tolist() if isinstance(probs, np.ndarray) else list(probs)
+                
+                bet_details = self.strategy.get_bet_details(odds, current_bankroll, model_probs=probs_list, prediction=prediction)
+                stake, bet_on, additional_info = bet_details
+
+                result = self._simulate_bet(fold, test_index[i], prediction, bet_on, actual_outcome, odds, current_bankroll, stake, model_probs=probs_list, **additional_info)
                 current_bankroll = result['bt_ending_bankroll']
                 
                 # Add all original features to the result
@@ -364,7 +408,7 @@ class ModelBacktest(BaseBacktest):
 
         self.detailed_results = pd.DataFrame(all_results)
         self.bookie_results = pd.DataFrame(bookie_results)
-        self.model_prob_columns = [f'bt_model_prob_{i}' for i in range(len(self.odds_columns))]
+       
 
 
 class PredictionBacktest(BaseBacktest):
@@ -459,19 +503,18 @@ class PredictionBacktest(BaseBacktest):
             odds = row[self.odds_columns].tolist()
             model_probs = row[self.model_prob_columns].tolist() if self.model_prob_columns else None
 
-            # Simulate bet based on prediction
-            result = self._simulate_bet(0, i, prediction, actual_outcome, odds, current_bankroll, model_probs=model_probs)
+            bet_details = self.strategy.get_bet_details(odds, current_bankroll, model_probs=model_probs, prediction=prediction)
+            stake, bet_on, additional_info = bet_details
+
+            result = self._simulate_bet(0, i, prediction, bet_on, actual_outcome, odds, current_bankroll, stake, model_probs=model_probs, **additional_info)
             current_bankroll = result['bt_ending_bankroll']
             
-            # Add all original features to the result
             result.update(row.to_dict())
             all_results.append(result)
 
-            # Simulate bookie bet
             bookie_result = self._simulate_bookie_bet(0, i, odds, actual_outcome, bookie_bankroll)
             bookie_bankroll = bookie_result['bt_ending_bankroll']
             
-            # Add all original features to the bookie result
             bookie_result.update(row.to_dict())
             bookie_results.append(bookie_result)
 

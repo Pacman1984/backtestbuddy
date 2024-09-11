@@ -273,6 +273,9 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
     """
     Calculate all metrics and return them in a dictionary.
     """
+    # Filter out rows where no bet was placed
+    bet_placed = detailed_results[(detailed_results['bt_stake'] > 0) & (detailed_results['bt_bet_on'] != -1)]
+
     # Calculate backtesting period information
     start_date = detailed_results['bt_date_column'].min()
     end_date = detailed_results['bt_date_column'].max()
@@ -287,10 +290,10 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
     avg_drawdown, avg_drawdown_duration, max_drawdown, max_drawdown_duration, median_drawdown_duration = calculate_drawdowns(detailed_results)
 
     # Calculate best and worst bets
-    best_bet, worst_bet = calculate_best_worst_bets(detailed_results)
+    best_bet, worst_bet = calculate_best_worst_bets(bet_placed)
 
     # Calculate highest winning and losing odds
-    highest_winning_odds, highest_losing_odds = calculate_highest_odds(detailed_results)
+    highest_winning_odds, highest_losing_odds = calculate_highest_odds(bet_placed)
 
     metrics = {
         # Backtest Period Information
@@ -318,16 +321,18 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
         'Median Drawdown Duration [bets]': median_drawdown_duration,
 
         # Betting Performance
-        'Win Rate [%]': calculate_win_rate(detailed_results) * 100,
-        'Average Odds [-]': calculate_average_odds(detailed_results),
+        'Win Rate [%]': calculate_win_rate(bet_placed) * 100,
+        'Average Odds [-]': calculate_average_odds(bet_placed),
         'Highest Winning Odds [-]': highest_winning_odds,
         'Highest Losing Odds [-]': highest_losing_odds,
-        'Average Stake [$]': calculate_average_stake(detailed_results),
+        'Average Stake [$]': calculate_average_stake(bet_placed),
         'Best Bet [$]': best_bet,
         'Worst Bet [$]': worst_bet,
 
         # Additional Information
-        'Total Bets': len(detailed_results),
+        'Total Bets': len(bet_placed),
+        'Total Opportunities': len(detailed_results),
+        'Bet Frequency [%]': (len(bet_placed) / len(detailed_results)) * 100,
     }
 
     return metrics

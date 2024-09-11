@@ -20,14 +20,15 @@ Understanding the stake is crucial for interpreting the results of your backtest
 
 #### `calculate_stake`
 
-This abstract method must be implemented by all concrete strategy classes. It calculates the stake for a bet based on the given odds and current bankroll.
+This abstract method must be implemented by all concrete strategy classes. It calculates the stake for a bet based on the given odds, current bankroll, and other optional parameters.
 
-- **Parameters:**
-  - `odds` (float): The odds for the bet.
-  - `bankroll` (float): The current bankroll.
-  - `**kwargs`: Additional keyword arguments that might be needed for specific strategies.
-- **Returns:**
-  - `float`: The calculated stake for the bet.
+#### `select_bet`
+
+This abstract method must be implemented by all concrete strategy classes. It selects the outcome to bet on based on the given odds, model probabilities, and other optional parameters.
+
+#### `get_bet_details`
+
+This method combines `calculate_stake` and `select_bet` to provide complete bet details. It returns a tuple containing the stake, the index of the outcome to bet on, and additional information specific to the strategy.
 
 ## Implemented Strategies
 
@@ -37,49 +38,35 @@ The `FixedStake` class implements a fixed stake (flat betting) strategy. This st
 
 #### Attributes
 
-- `stake` (Union[float, int]): The fixed stake amount or percentage to bet.
+- `stake` (float): The fixed stake amount to bet.
 - `initial_bankroll` (Union[float, None]): The initial bankroll, set on the first bet.
 
 #### Methods
 
-##### `__init__`
+Implements all methods from `BaseStrategy` with logic specific to fixed stake betting.
 
-``` python
-def __init__(self, stake: Union[float, int]):
-```
+### KellyCriterion
 
-Initializes the FixedStake strategy.
+The `KellyCriterion` class implements a betting strategy based on the Kelly Criterion. This strategy calculates the optimal fraction of the bankroll to bet based on the perceived edge and the odds offered.
 
-- **Parameters:**
-  - `stake` (Union[float, int]): The fixed stake amount or percentage to bet.
-- **Raises:**
-  - `ValueError`: If stake is >= 1 and not an integer.
+#### Attributes
 
-##### `calculate_stake`
+- `downscaling` (float): Factor to scale down the Kelly fraction (default is 0.5 for "half Kelly").
+- `max_bet` (float): Maximum bet size as a fraction of the bankroll (default is 0.1 or 10%).
+- `min_kelly` (float): Minimum Kelly fraction required to place a bet (default is 0).
+- `min_prob` (float): Minimum model probability required to place a bet (default is 0).
 
-``` python
-def calculate_stake(self, odds: float, bankroll: float, **kwargs: Any) -> float:
-```
+#### Methods
 
-Calculates the stake for a bet using the fixed stake strategy.
+Implements all methods from `BaseStrategy` with logic specific to Kelly Criterion betting. Additionally includes:
 
-- **Parameters:**
-  - `odds` (float): The odds for the bet (not used in this strategy, but required by the interface).
-  - `bankroll` (float): The current bankroll.
-  - `**kwargs`: Additional keyword arguments (not used in this strategy, but might be used in subclasses).
-- **Returns:**
-  - `float`: The calculated stake for the bet.
+##### `calculate_kelly_fraction`
 
-##### `__str__`
+Calculates the Kelly fraction for a given odds and probability.
 
-``` python
-def __str__(self) -> str:
-```
+##### `get_bet_details`
 
-Returns a string representation of the strategy.
-
-- **Returns:**
-  - `str`: A string describing the strategy.
+Returns a tuple containing the stake, the index of the outcome to bet on, and a dictionary of additional information. The additional information includes the Kelly fractions for each possible outcome, stored as `kelly_fraction_0`, `kelly_fraction_1`, etc.
 
 ## Utility Functions
 
@@ -99,7 +86,7 @@ Returns the default betting strategy.
 To add a new strategy:
 
 1. Create a new class that inherits from `BaseStrategy`.
-2. Implement the `calculate_stake` method.
+2. Implement the `calculate_stake`, `select_bet`, and `get_bet_details` methods.
 3. Add any additional methods or attributes specific to the new strategy.
 4. Optionally, override the `__str__` method to provide a custom string representation.
 
@@ -111,11 +98,21 @@ class NewStrategy(BaseStrategy):
         self.param1 = param1
         self.param2 = param2
 
-    def calculate_stake(self, odds: float, bankroll: float, **kwargs: Any) -> float:
-        # Implement the stake calculation logic
+    def calculate_stake(self, odds: List[float], bankroll: float, model_probs: Optional[List[float]] = None, **kwargs: Any) -> float:
+        # Your stake calculation logic here
         pass
 
-    def __str__(self) -> str:
-        return f"NewStrategy(param1={self.param1}, param2={self.param2})"
-```
+    def select_bet(self, odds: List[float], model_probs: Optional[List[float]] = None, **kwargs: Any) -> int:
+        # Your bet selection logic here
+        pass
 
+    def get_bet_details(self, odds: List[float], bankroll: float, model_probs: Optional[List[float]] = None, prediction: Optional[int] = None, **kwargs: Any) -> Tuple[float, int, Dict[str, Any]]:
+        stake = self.calculate_stake(odds, bankroll, model_probs, **kwargs)
+        bet_on = self.select_bet(odds, model_probs, prediction, **kwargs)
+        additional_info = {
+            "custom_info_1": some_value,
+            "custom_info_2": another_value,
+            # Add any other relevant information
+        }
+        return stake, bet_on, additional_info
+```

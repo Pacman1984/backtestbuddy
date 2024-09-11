@@ -1,5 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import Union, Any
+from typing import Any, List, Optional, Tuple, Union, Dict
+
+import numpy as np
+
 
 class BaseStrategy(ABC):
     """
@@ -7,12 +10,12 @@ class BaseStrategy(ABC):
     """
 
     @abstractmethod
-    def calculate_stake(self, odds: float, bankroll: float, **kwargs: Any) -> float:
+    def calculate_stake(self, odds: List[float], bankroll: float, **kwargs: Any) -> float:
         """
         Calculate the stake for a bet.
 
         Args:
-            odds (float): The odds for the bet.
+            odds (List[float]): The odds for each possible outcome.
             bankroll (float): The current bankroll.
             **kwargs: Additional keyword arguments that might be needed for specific strategies.
 
@@ -21,12 +24,41 @@ class BaseStrategy(ABC):
         """
         pass
 
-# What "stake" means in betting strategies:
-# The stake is the absolute amount of money bet on a single game or event.
-# In the context of BacktestBuddy:
-# - The output of a strategy's calculate_stake method is used as the 'bt_stake' column in the results dataframe.
-# - This 'bt_stake' represents the actual amount of money wagered on each individual bet.
-# - For example, if a strategy returns a stake of 10, it means $10 (or 10 units of the chosen currency) will be bet on that particular game.
+    @abstractmethod
+    def select_bet(self, odds: List[float], model_probs: Optional[List[float]] = None, prediction: Optional[int] = None, **kwargs: Any) -> int:
+        """
+        Select the outcome to bet on.
+
+        Args:
+            odds (List[float]): The odds for each possible outcome.
+            model_probs (Optional[List[float]]): The model's predicted probabilities for each outcome.
+            prediction (Optional[int]): The predicted outcome index.
+            **kwargs: Additional keyword arguments that might be needed for specific strategies.
+
+        Returns:
+            int: The index of the outcome to bet on.
+        """
+        pass
+
+    @abstractmethod
+    def get_bet_details(self, odds: List[float], bankroll: float, model_probs: Optional[List[float]] = None, prediction: Optional[int] = None, **kwargs: Any) -> Tuple[float, int]:
+        """
+        Get the details of the bet, including the stake and the outcome to bet on.
+
+        Args:
+            odds (List[float]): The odds for each possible outcome.
+            bankroll (float): The current bankroll.
+            model_probs (Optional[List[float]]): The model's predicted probabilities for each outcome.
+            prediction (Optional[int]): The predicted outcome index.
+            **kwargs: Additional keyword arguments that might be needed for specific strategies.
+
+        Returns:
+            Tuple[float, int]: A tuple containing the calculated stake and the index of the outcome to bet on.
+        """
+        stake = self.calculate_stake(odds, bankroll, model_probs=model_probs, **kwargs)
+        bet_on = self.select_bet(odds, model_probs, prediction, **kwargs)
+        return stake, bet_on if stake > 0 else -1
+
 
 class FixedStake(BaseStrategy):
     """
@@ -41,49 +73,106 @@ class FixedStake(BaseStrategy):
         stake (Union[float, int]): The fixed stake amount or percentage to bet.
     """
 
-    def __init__(self, stake: Union[float, int]):
+    def __init__(self, stake: float):
         """
         Initialize the FixedStake strategy.
 
         Args:
-            stake (Union[float, int]): The fixed stake amount or percentage to bet.
+            stake (float): The fixed stake amount or percentage to bet.
         """
-        if stake >= 1 and not isinstance(stake, int):
-            raise ValueError("Stake must be an integer when >= 1")
         self.stake = stake
         self.initial_bankroll: Union[float, None] = None
 
-    def calculate_stake(self, odds: float, bankroll: float, **kwargs: Any) -> float:
-        """
-        Calculate the stake for a bet using the fixed stake strategy.
-
-        Args:
-            odds (float): The odds for the bet (not used in this strategy, but required by the interface).
-            bankroll (float): The current bankroll.
-            **kwargs: Additional keyword arguments (not used in this strategy, but might be used in subclasses).
-
-        Returns:
-            float: The calculated stake for the bet.
-        """
+    def calculate_stake(self, odds: List[float], bankroll: float, model_probs: Optional[List[float]] = None, **kwargs: Any) -> float:
         if self.initial_bankroll is None:
             self.initial_bankroll = bankroll
 
         if self.stake < 1:
             return self.initial_bankroll * self.stake
         else:
-            return min(self.stake, bankroll)  # Ensure we don't bet more than the current bankroll
+            return min(self.stake, bankroll)
+
+    def select_bet(self, odds: List[float], model_probs: Optional[List[float]] = None, prediction: Optional[int] = None, **kwargs: Any) -> int:
+        if model_probs:
+            return model_probs.index(max(model_probs))
+        elif prediction is not None:
+            return prediction
+        else:
+            return odds.index(min(odds))
+
+    def get_bet_details(self, odds: List[float], current_bankroll: float, model_probs: Optional[List[float]] = None, prediction: Optional[int] = None) -> Tuple[float, int, Dict[str, Any]]:
+        bet_on = prediction if prediction is not None else odds.index(min(odds))
+        return self.stake, bet_on, {}  # Return an empty dictionary as additional_info
 
     def __str__(self) -> str:
-        """
-        Return a string representation of the strategy.
-
-        Returns:
-            str: A string describing the strategy.
-        """
         if self.stake < 1:
             return f"Fixed Stake Strategy ({self.stake:.2%} of initial bankroll)"
         else:
             return f"Fixed Stake Strategy (${self.stake:.2f})"
+
+
+class KellyCriterion(BaseStrategy):
+    """
+    A betting strategy based on the Kelly Criterion.
+
+    This strategy calculates the optimal fraction of the bankroll to bet based on the
+    perceived edge and the odds offered. It bets on the outcome with the highest Kelly fraction.
+
+    Attributes:
+        downscaling (float): Factor to scale down the Kelly fraction (default is 0.5 for "half Kelly").
+        max_bet (float): Maximum bet size as a fraction of the bankroll (default is 0.1 or 10%).
+        min_kelly (float): Minimum Kelly fraction required to place a bet (default is 0).
+        min_prob (float): Minimum model probability required to place a bet (default is 0).
+    """
+
+    def __init__(self, downscaling: float = 0.5, max_bet: float = 0.1, min_kelly: float = 0, min_prob: float = 0):
+        self.downscaling = downscaling
+        self.max_bet = max_bet
+        self.min_kelly = min_kelly
+        self.min_prob = min_prob
+
+    def calculate_kelly_fraction(self, odds: float, prob: float) -> float:
+        if prob > self.min_prob:
+            adj_odds = odds - 1
+            kelly = (prob * adj_odds - (1 - prob)) / adj_odds
+            return max(0, kelly)
+        return 0
+
+    def calculate_stake(self, odds: List[float], bankroll: float, model_probs: Optional[List[float]] = None, **kwargs) -> float:
+        if model_probs is None:
+            return 0
+
+        bet_on = self.select_bet(odds, model_probs, **kwargs)
+        if bet_on == -1:
+            return 0
+
+        kelly_fraction = self.calculate_kelly_fraction(odds[bet_on], model_probs[bet_on])
+
+        if kelly_fraction > self.min_kelly:
+            return min(kelly_fraction * self.downscaling, self.max_bet) * bankroll
+
+        return 0
+
+    def select_bet(self, odds: List[float], model_probs: Optional[List[float]] = None, prediction: Optional[int] = None, **kwargs) -> int:
+        if model_probs is None:
+            return -1
+        kelly_fractions = [self.calculate_kelly_fraction(odd, prob) for odd, prob in zip(odds, model_probs)]
+        return kelly_fractions.index(max(kelly_fractions))
+
+    def get_bet_details(self, odds: List[float], bankroll: float, model_probs: Optional[List[float]] = None, prediction: Optional[int] = None, **kwargs: Any) -> Tuple[float, int, Dict[str, Any]]:
+        stake, bet_on = super().get_bet_details(odds, bankroll, model_probs, prediction, **kwargs)
+        kelly_fractions = []
+        if model_probs:
+            for odd, prob in zip(odds, model_probs):
+                kelly_fractions.append(self.calculate_kelly_fraction(odd, prob))
+        
+        additional_info = {f"kelly_fraction_{i}": kf for i, kf in enumerate(kelly_fractions)}
+        return stake, bet_on, additional_info
+
+    def __str__(self) -> str:
+        return (f"Kelly Criterion Strategy (downscaling={self.downscaling}, max_bet={self.max_bet}, "
+                f"min_kelly={self.min_kelly}, min_prob={self.min_prob})")
+
 
 def get_default_strategy() -> FixedStake:
     """

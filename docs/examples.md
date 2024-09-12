@@ -21,6 +21,7 @@ print(results)
 ```
 
 ## Advanced Usage Example
+
 Here is an example of how to use BacktestBuddy to backtest a machine learning strategy that uses a random forest classifier to predict whether the price of the S&P 500 index will go up or down:
 
 ```python

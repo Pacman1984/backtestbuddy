@@ -8,12 +8,12 @@ The `backtest` module is the core of the BacktestBuddy framework. It contains th
 
 The `BaseBacktest` class is an abstract base class that provides a framework for implementing different backtesting approaches. It should be subclassed to create specific backtesting strategies.
 
-#### Key Methods:
+#### Key Methods
 
 - `__init__(self, data, odds_columns, outcome_column, date_column, initial_bankroll, model, strategy, cv_schema)`: Initializes the backtest with the given parameters.
 - `run(self)`: Abstract method that should be implemented by subclasses to perform the actual backtesting logic.
 - `get_detailed_results(self)`: Returns a DataFrame containing detailed results for each bet.
-  - `detailed_results` is a DataFrame with the following columns: 
+  - `detailed_results` is a DataFrame with the following columns:
     - 'bt_index': Index of the current data point.
     - 'bt_fold': Current fold number.
     - 'bt_predicted_outcome': Predicted outcome index.
@@ -37,7 +37,7 @@ The `BaseBacktest` class is an abstract base class that provides a framework for
 
 The `ModelBacktest` class is used for backtesting strategies that use a predictive model. It implements the backtesting logic for strategies where a model is used to make predictions before applying the betting strategy.
 
-#### Key Methods:
+#### Key Methods (ModelBacktest)
 
 - `__init__(self, data, odds_columns, outcome_column, date_column, model, initial_bankroll, strategy, cv_schema)`: Initializes the ModelBacktest with the given parameters, including a predictive model.
 - `run(self)`: Implements the backtesting logic for a model-based strategy. It uses the model to make predictions, applies the betting strategy, and populates `self.detailed_results` and `self.bookie_results` with the outcomes.
@@ -46,7 +46,7 @@ The `ModelBacktest` class is used for backtesting strategies that use a predicti
 
 The `PredictionBacktest` class is used for backtesting strategies that use pre-computed predictions. It implements the backtesting logic for strategies where predictions are already available in the dataset, and only the betting strategy needs to be applied.
 
-#### Key Methods:
+#### Key Methods (PredictionBacktest)
 
 - `__init__(self, data, odds_columns, outcome_column, date_column, prediction_column, initial_bankroll, strategy, model_prob_columns)`: Initializes the PredictionBacktest with the given parameters, including a column for pre-computed predictions and optional model probability columns.
 - `run(self)`: Implements the backtesting logic for a strategy based on pre-computed predictions. It processes the entire dataset sequentially, simulating a betting strategy and populates `self.detailed_results` and `self.bookie_results` with the outcomes.

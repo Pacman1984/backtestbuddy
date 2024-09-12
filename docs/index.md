@@ -59,10 +59,11 @@ backtest = PredictionBacktest(
     prediction_column='model_predictions',
     initial_bankroll=1000,
     strategy=strategy,
+    model_prob_columns=['prob_team_a', 'prob_team_b']
 )
 
 # Run the backtest
-backtest.run()
+backtest.run()    
 
 # Show the detailed match results
 backtest.detailed_results

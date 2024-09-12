@@ -150,8 +150,19 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
 
 ### Total Bets
 - Description: The total number of bets placed during the backtest period.
-- Calculation: Count of rows in the detailed results dataframe
+- Calculation: Count of rows in the detailed results dataframe where a bet was placed
+- Columns used: `bt_stake`, `bt_bet_on`
+
+### Total Opportunities
+- Description: The total number of betting opportunities during the backtest period.
+- Calculation: Count of all rows in the detailed results dataframe
 - All columns
+
+### Bet Frequency
+- Description: The percentage of opportunities where a bet was placed.
+- Formula: $Bet Frequency = \frac{Total Bets}{Total Opportunities} \times 100\%$
+- Calculation: `(Total Bets / Total Opportunities) * 100`
+- Columns used: `bt_stake`, `bt_bet_on`
 
 ### Backtest Duration
 - Description: The time period covered by the backtest.

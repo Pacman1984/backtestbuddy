@@ -196,7 +196,7 @@ def calculate_calmar_ratio(detailed_results: pd.DataFrame, return_period: int = 
     # Calculate and return the Calmar Ratio
     return annualized_mean_return / abs(max_drawdown)
 
-def calculate_drawdowns(detailed_results: pd.DataFrame) -> Tuple[float, float, float, int, float]:
+def calculate_drawdowns(detailed_results: pd.DataFrame) -> Tuple[float, float]:
     """
     Calculate drawdowns and their durations.
     
@@ -204,38 +204,22 @@ def calculate_drawdowns(detailed_results: pd.DataFrame) -> Tuple[float, float, f
         detailed_results (pd.DataFrame): DataFrame containing detailed results of the backtest.
     
     Returns:
-        Tuple[float, float, float, int, float]: 
-            Average drawdown, 
-            Average drawdown duration,
+        Tuple[float, float]: 
             Maximum drawdown,
-            Maximum drawdown duration,
-            Median drawdown duration
+            Maximum drawdown duration
     """
-    equity_curve = detailed_results['bt_ending_bankroll']
-    peak = equity_curve.cummax()
-    drawdown = (equity_curve - peak) / peak
-    
-    # Find drawdown periods
-    is_drawdown = drawdown < 0
-    drawdown_start = is_drawdown.ne(is_drawdown.shift()).cumsum()
-    
-    drawdowns = []
-    durations = []
-    
-    for _, group in drawdown.groupby(drawdown_start):
-        if (group < 0).any():
-            max_drawdown = group.min()
-            duration = len(group)
-            drawdowns.append(abs(max_drawdown))
-            durations.append(duration)
-    
-    avg_drawdown = np.mean(drawdowns) if drawdowns else 0
-    avg_duration = np.mean(durations) if durations else 0
-    max_drawdown = max(drawdowns) if drawdowns else 0
-    max_duration = max(durations) if durations else 0
-    median_duration = np.median(durations) if durations else 0
-    
-    return avg_drawdown, avg_duration, max_drawdown, max_duration, median_duration
+    equity_curve = detailed_results['bt_ending_bankroll'].values
+    cummax = np.maximum.accumulate(equity_curve)
+    drawdown = (cummax - equity_curve) / cummax
+    max_drawdown = np.max(drawdown)
+
+    # Find the end of the maximum drawdown period
+    max_drawdown_end = np.argmax(drawdown)
+    # Find the start of the maximum drawdown period
+    max_drawdown_start = np.argmax(equity_curve[:max_drawdown_end])
+    max_duration = max_drawdown_end - max_drawdown_start + 1  # +1 to include both start and end
+
+    return max_drawdown, max_duration
 
 def calculate_best_worst_bets(detailed_results: pd.DataFrame) -> Tuple[float, float]:
     """
@@ -287,7 +271,7 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
     bankroll_valley = detailed_results['bt_ending_bankroll'].min()
 
     # Calculate drawdowns
-    avg_drawdown, avg_drawdown_duration, max_drawdown, max_drawdown_duration, median_drawdown_duration = calculate_drawdowns(detailed_results)
+    max_drawdown, max_drawdown_duration = calculate_drawdowns(bet_placed)
 
     # Calculate best and worst bets
     best_bet, worst_bet = calculate_best_worst_bets(bet_placed)
@@ -315,10 +299,8 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
 
         # Drawdown Analysis
         'Max Drawdown [%]': max_drawdown * 100,
-        'Avg. Drawdown [%]': avg_drawdown * 100,
         'Max. Drawdown Duration [bets]': max_drawdown_duration,
-        'Avg. Drawdown Duration [bets]': avg_drawdown_duration,
-        'Median Drawdown Duration [bets]': median_drawdown_duration,
+
 
         # Betting Performance
         'Win Rate [%]': calculate_win_rate(bet_placed) * 100,

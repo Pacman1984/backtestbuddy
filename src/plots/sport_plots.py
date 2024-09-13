@@ -101,13 +101,14 @@ def plot_backtest(backtest: Any) -> go.Figure:
     max_drawdown = np.max(drawdown)
     max_drawdown_end = np.argmax(drawdown)
     max_drawdown_start = np.argmax(bet_placed['bt_ending_bankroll'][:max_drawdown_end])
+    max_drawdown_length = max_drawdown_end - max_drawdown_start + 1  # +1 to include both start and end
 
     fig.add_vrect(
         x0=bet_placed['game_index'].iloc[max_drawdown_start],
         x1=bet_placed['game_index'].iloc[max_drawdown_end],
         fillcolor="rgba(255, 0, 0, 0.2)", opacity=0.5,
         layer="below", line_width=0,
-        annotation_text=f"Max Drawdown: {max_drawdown:.2%}",
+        annotation_text=f"Max Drawdown: {max_drawdown:.2%}<br>Length: {max_drawdown_length} bets",
         annotation_position="top left",
         row=1, col=1
     )

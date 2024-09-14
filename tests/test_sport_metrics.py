@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 import numpy as np
-from src.metrics.sport_metrics import *
+from backtestbuddy.metrics.sport_metrics import *
 
 @pytest.fixture
 def sample_data():

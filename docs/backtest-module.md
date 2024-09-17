@@ -54,8 +54,8 @@ The `PredictionBacktest` class is used for backtesting strategies that use pre-c
 ## Example Usage
 
 ```python
-from src.strategies.base import FixedStake
-from src.backtest.backtest import PredictionBacktest
+from backtestbuddy.strategies.base import FixedStake
+from backtestbuddy.backtest.backtest import PredictionBacktest
 
 
 # Load your data

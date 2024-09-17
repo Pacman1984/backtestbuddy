@@ -1,8 +1,10 @@
 # Strategies Module
 
-The Strategies module provides a framework for implementing various betting strategies. It defines an abstract base class `BaseStrategy` that serves as a template for all concrete strategy implementations.
+The Strategies module provides a framework for implementing various betting strategies. It defines an abstract base class `BaseStrategy` that serves as a template for all concrete strategy implementations. Right now, the only module that implements these strategies is the `sport_strategies.py` file.
 
-## Understanding Stake in Betting Strategies
+## Sport Strategies
+
+### Understanding Stake in Betting Strategies
 
 In the context of betting strategies, the "stake" refers to the absolute amount of money bet on a single game or event. Here's how it works in BacktestBuddy:
 
@@ -12,59 +14,59 @@ In the context of betting strategies, the "stake" refers to the absolute amount 
 
 Understanding the stake is crucial for interpreting the results of your backtests and for designing effective betting strategies.
 
-## BaseStrategy
+### BaseStrategy
 
 `BaseStrategy` is an abstract base class that defines the interface for all betting strategies.
 
-### Methods
+#### Methods
 
-#### `calculate_stake`
+##### `calculate_stake`
 
 This abstract method must be implemented by all concrete strategy classes. It calculates the stake for a bet based on the given odds, current bankroll, and other optional parameters.
 
-#### `select_bet`
+###### `select_bet`
 
 This abstract method must be implemented by all concrete strategy classes. It selects the outcome to bet on based on the given odds, model probabilities, and other optional parameters.
 
-#### `get_bet_details`
+###### `get_bet_details`
 
 This method combines `calculate_stake` and `select_bet` to provide complete bet details. It returns a tuple containing the stake, the index of the outcome to bet on, and additional information specific to the strategy.
 
-## Implemented Strategies
+### Implemented Strategies
 
-### FixedStake
+#### FixedStake
 
 The `FixedStake` class implements a fixed stake (flat betting) strategy. This strategy bets either a fixed amount or a fixed percentage of the initial bankroll, depending on the stake value.
 
-#### Attributes (FixedStake)
+##### Attributes (FixedStake)
 
 - `stake` (float): The fixed stake amount to bet.
 - `initial_bankroll` (Union[float, None]): The initial bankroll, set on the first bet.
 
-#### Methods (FixedStake)
+##### Methods (FixedStake)
 
 Implements all methods from `BaseStrategy` with logic specific to fixed stake betting.
 
-### KellyCriterion
+#### KellyCriterion
 
 The `KellyCriterion` class implements a betting strategy based on the Kelly Criterion. This strategy calculates the optimal fraction of the bankroll to bet based on the perceived edge and the odds offered.
 
-#### Attributes (KellyCriterion)
+##### Attributes (KellyCriterion)
 
 - `downscaling` (float): Factor to scale down the Kelly fraction (default is 0.5 for "half Kelly").
 - `max_bet` (float): Maximum bet size as a fraction of the bankroll (default is 0.1 or 10%).
 - `min_kelly` (float): Minimum Kelly fraction required to place a bet (default is 0).
 - `min_prob` (float): Minimum model probability required to place a bet (default is 0).
 
-#### Methods (KellyCriterion)
+##### Methods (KellyCriterion)
 
 Implements all methods from `BaseStrategy` with logic specific to Kelly Criterion betting. Additionally includes:
 
-##### `calculate_kelly_fraction`
+###### `calculate_kelly_fraction`
 
 Calculates the Kelly fraction for a given odds and probability.
 
-##### `get_bet_details` (KellyCriterion)
+###### `get_bet_details` (KellyCriterion)
 
 Returns a tuple containing the stake, the index of the outcome to bet on, and a dictionary of additional information. The additional information includes the Kelly fractions for each possible outcome, stored as `kelly_fraction_0`, `kelly_fraction_1`, etc.
 

@@ -1,8 +1,8 @@
 # Metrics Module
 
-The Metrics Module in BacktestBuddy provides a comprehensive set of performance metrics to evaluate your betting strategies. This document describes each metric, how it's calculated, and which columns from the detailed results dataframe are used.
+The Metrics Module in BacktestBuddy provides a comprehensive set of performance metrics to evaluate your betting strategies. This document describes each metric, how it's calculated, and which columns from the detailed results dataframe are used. Right now, the only module that implements these metrics is the `sport_metrics.py` file.
 
-## Overall Performance Metrics
+## Overall Sport Performance Metrics
 
 ### ROI (Return on Investment)
 

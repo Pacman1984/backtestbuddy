@@ -2,17 +2,17 @@
 
 BacktestBuddy is designed to be a flexible and extensible framework for backtesting various strategies. Here are the core concepts:
 
-## Backtest
+## Sport Backtest
 
-The `backtest` module contains the main classes for running backtests. This includes:
+The `backtest` module consists right now of the `sport_backtest.py` file, which contains the main classes for running sports betting backtests. This includes:
 
-- `BaseBacktest`: The base class for all backtests.
-- `ModelBacktest`: A class for backtesting machine learning models.
-- `PredictionBacktest`: A class for backtesting based on precomputed predictions.
+- `BaseBacktest`: The base class for all sports backtests.
+- `ModelBacktest`: A class for backtesting machine learning models in sports.
+- `PredictionBacktest`: A class for backtesting based on precomputed sports predictions.
 
-## Metrics
+## Sport Metrics
 
-The `metrics` module provides functionality for calculating various performance metrics after a backtest.
+The `metrics` module currently only contains the `sport_metrics.py` file, which provides functionality for calculating various performance metrics after a backtest.
 
 - ROI (Return on Investment): Measures the profitability of your strategy relative to the initial investment. (Percentage)
 - Total Profit: The total amount of money gained or lost during the backtest period. (Currency)
@@ -39,17 +39,17 @@ The `metrics` module provides functionality for calculating various performance 
 - Bet Frequency: The percentage of bets placed out of the total opportunities. (Percentage)
 - Backtest Duration: The time period covered by the backtest. (Time period, e.g., days, months, years)
 
-## Strategies
+## Sport Strategies
 
-The `strategies` module contains the base class for defining betting strategies and any specific strategies you implement.
+The `strategies` module currently only contains the `sport_strategies.py` file, which provides functionality for defining betting strategies and any specific strategies you implement.
 
 - `BaseStrategy`: The base class for all strategies.
 - `FixedStake`: A strategy that bets a fixed amount per bet.
 - `KellyCriterion`: A strategy that bets a fraction of the bankroll based on the Kelly Criterion.
 
-## Plots
+## Sport Plots
 
-The `plots` module contains the base class for plotting backtest results and any specific plots you implement.
+The `plots` module currently only contains the `sport_plots.py` file, which provides functionality for plotting backtest results and any specific plots you implement.
 
 - `plot_backtest`: Creates a plot of the backtest results, including the bankroll over time, ROI for each bet, and stake percentage.
 - `plot_odds_histogram`: Creates a histogram plot of the odds distribution, splitting each bin into winning and losing bets, and adding dotted lines for break-even win rates.

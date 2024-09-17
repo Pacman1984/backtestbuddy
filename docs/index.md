@@ -39,8 +39,8 @@ pip install backtestbuddy
 Here's a simple example of how to use BacktestBuddy for a sports betting backtest:
 
 ```python
-from src.strategies.sport_strategies import FixedStake
-from src.backtest.sport_backtest import PredictionBacktest
+from backtestbuddy.strategies.sport_strategies import FixedStake
+from backtestbuddy.backtest.sport_backtest import PredictionBacktest
 
 # Prepare your data
 
@@ -59,7 +59,7 @@ backtest = PredictionBacktest(
     prediction_column='model_predictions',
     initial_bankroll=1000,
     strategy=strategy,
-    model_prob_columns=['prob_team_a', 'prob_team_b']
+    model_prob_columns=['prob_team_a', 'prob_team_b'] # Needed for PredictionBacktest in combination with Kelly Strategy. Not needed for ModelBacktest in combination with Kelly Strategy, because the model probabiliies will be calculated by the model or if the Strategy does not require model probabilities, like Fixed Stake.
 )
 
 # Run the backtest

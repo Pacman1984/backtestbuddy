@@ -1,0 +1,14 @@
+site_name: BacktestBuddy Docs
+theme: readthedocs
+nav:
+  - Home: index.md
+  - About: about.md
+  - Documentation:
+      - Getting Started: getting-started.md
+      - Core Concepts: core-concepts.md
+      - Backtest Module: backtest-module.md
+      - Metrics Module: metrics-module.md
+      - Strategies Module: strategies-module.md
+  - Examples: examples.md
+  - Change Log: changelog.md
+  - Contact: contact.md

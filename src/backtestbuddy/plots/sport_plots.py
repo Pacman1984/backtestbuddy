@@ -31,10 +31,10 @@ def plot_backtest(backtest: Any) -> go.Figure:
     """
     # Filter main_results to only include games where a bet was placed
     main_results = backtest.detailed_results
-    bet_placed = main_results[(main_results['bt_stake'] > 0) & (main_results['bt_bet_on'] != -1)]
+    bet_placed = main_results[(main_results['bt_stake'] > 0) & (main_results['bt_bet_on'] != -1)].copy()
 
     # Create a game index for bet_placed
-    bet_placed['game_index'] = range(1, len(bet_placed) + 1)
+    bet_placed.loc[:, 'game_index'] = range(1, len(bet_placed) + 1)
 
     # Convert date column to string to avoid dtype issues
     date_strings = bet_placed['bt_date_column'].astype(str)

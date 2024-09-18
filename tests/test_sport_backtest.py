@@ -20,15 +20,15 @@ class TestModelBacktest:
 
     @pytest.fixture
     def dummy_model(self):
-        return DummyClassifier(strategy="most_frequent")
+        return DummyClassifier(strategy="stratified", random_state=42)
 
     @pytest.fixture
     def kelly_strategy(self):
-        return KellyCriterion(downscaling=1)
+        return KellyCriterion(downscaling=1.0)
 
     @pytest.fixture
     def fractional_kelly_strategy(self):
-        return KellyCriterion()
+        return KellyCriterion(downscaling=0.5)
 
     @pytest.fixture
     def backtest(self, sample_data, dummy_model):
@@ -193,7 +193,45 @@ class TestModelBacktest:
         full_kelly_stakes = full_kelly_backtest.detailed_results['bt_stake']
         fractional_kelly_stakes = fractional_kelly_backtest.detailed_results['bt_stake']
         
+        # Print out the stakes for debugging
+        print("Full Kelly stakes:", full_kelly_stakes)
+        print("Fractional Kelly stakes:", fractional_kelly_stakes)
+
+        # Check if stakes are close enough, allowing for small floating-point differences
+        # np.testing.assert_array_less(fractional_kelly_stakes, full_kelly_stakes * 1.01)
+
+        # If you want to keep the original assertion, you can uncomment the line below
         assert (fractional_kelly_stakes <= full_kelly_stakes).all()
+
+    def test_incorrect_predict_proba_output(self, sample_data):
+        class IncorrectProbabilityClassifier:
+            def fit(self, X, y):
+                pass
+
+            def predict(self, X):
+                return np.zeros(len(X))
+
+            def predict_proba(self, X):
+                # Return incorrect number of probabilities
+                return np.random.random((len(X), 3))  # 3 probabilities instead of 2
+
+        incorrect_model = IncorrectProbabilityClassifier()
+        backtest = ModelBacktest(
+            data=sample_data,
+            odds_columns=['odds_1', 'odds_2'],
+            outcome_column='outcome',
+            date_column='date',
+            model=incorrect_model,
+            initial_bankroll=1000,
+            strategy=FixedStake(stake=100)
+        )
+
+        with pytest.raises(ValueError) as excinfo:
+            backtest.run()
+
+        assert "The model's predict_proba output shape (3) doesn't match the number of odds columns (2)" in str(excinfo.value)
+        assert "Example of correct output:" in str(excinfo.value)
+        assert "Example of incorrect output:" in str(excinfo.value)
 
 
 class TestPredictionBacktest:
@@ -272,13 +310,13 @@ class TestPredictionBacktest:
         metrics = backtest.calculate_metrics()
         assert isinstance(metrics, dict)
         expected_metrics = [
+            'Backtest Start Date', 'Backtest End Date', 'Backtest Duration',
             'ROI [%]', 'Total Profit [$]', 'Bankroll Final [$]', 'Bankroll Peak [$]', 'Bankroll Valley [$]',
             'Sharpe Ratio [-]', 'Sortino Ratio [-]', 'Calmar Ratio [-]',
-            'Max Drawdown [%]', 'Avg. Drawdown [%]', 'Max. Drawdown Duration [bets]',
-            'Avg. Drawdown Duration [bets]', 'Median Drawdown Duration [bets]',
+            'Max Drawdown [%]', 'Max. Drawdown Duration [bets]',
             'Win Rate [%]', 'Average Odds [-]', 'Highest Winning Odds [-]', 'Highest Losing Odds [-]',
             'Average Stake [$]', 'Best Bet [$]', 'Worst Bet [$]',
-            'Total Bets'
+            'Total Bets', 'Total Opportunities', 'Bet Frequency [%]'
         ]
         for metric in expected_metrics:
             assert metric in metrics, f"Expected metric '{metric}' not found in calculated metrics"

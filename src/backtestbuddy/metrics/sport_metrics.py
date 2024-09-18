@@ -70,10 +70,11 @@ def calculate_max_drawdown(detailed_results: pd.DataFrame) -> float:
 
 def calculate_win_rate(detailed_results: pd.DataFrame) -> float:
     """
-    Calculate the win rate.
+    Calculate the win rate, considering only rows where a bet was placed.
     """
-    total_bets = len(detailed_results)
-    winning_bets = detailed_results['bt_win'].sum()
+    bet_placed = detailed_results[(detailed_results['bt_stake'] > 0) | (detailed_results['bt_bet_on'] != -1)]
+    total_bets = len(bet_placed)
+    winning_bets = bet_placed['bt_win'].sum()
     return winning_bets / total_bets if total_bets else 0
 
 def calculate_average_odds(detailed_results: pd.DataFrame) -> float:
@@ -90,9 +91,10 @@ def calculate_total_profit(detailed_results: pd.DataFrame) -> float:
 
 def calculate_average_stake(detailed_results: pd.DataFrame) -> float:
     """
-    Calculate the average stake.
+    Calculate the average stake, considering only non-zero stakes.
     """
-    return detailed_results['bt_stake'].mean()
+    non_zero_stakes = detailed_results['bt_stake'][detailed_results['bt_stake'] > 0]
+    return non_zero_stakes.mean() if len(non_zero_stakes) > 0 else 0
 
 def calculate_sortino_ratio(detailed_results: pd.DataFrame, return_period: int = 1, output_period: int = 252) -> float:
     """
@@ -196,7 +198,7 @@ def calculate_calmar_ratio(detailed_results: pd.DataFrame, return_period: int = 
     # Calculate and return the Calmar Ratio
     return annualized_mean_return / abs(max_drawdown)
 
-def calculate_drawdowns(detailed_results: pd.DataFrame) -> Tuple[float, float]:
+def calculate_drawdowns(detailed_results: pd.DataFrame) -> Tuple[float, int]:
     """
     Calculate drawdowns and their durations.
     
@@ -205,13 +207,19 @@ def calculate_drawdowns(detailed_results: pd.DataFrame) -> Tuple[float, float]:
     
     Returns:
         Tuple[float, float]: 
-            Maximum drawdown,
-            Maximum drawdown duration
+            Maximum drawdown in percentage,
+            Maximum drawdown duration in bets
     """
     equity_curve = detailed_results['bt_ending_bankroll'].values
+    if len(equity_curve) == 0:
+        return 0.0, 0
+
     cummax = np.maximum.accumulate(equity_curve)
     drawdown = (cummax - equity_curve) / cummax
     max_drawdown = np.max(drawdown)
+
+    if max_drawdown == 0:
+        return 0.0, 0
 
     # Find the end of the maximum drawdown period
     max_drawdown_end = np.argmax(drawdown)
@@ -258,7 +266,7 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
     Calculate all metrics and return them in a dictionary.
     """
     # Filter out rows where no bet was placed
-    bet_placed = detailed_results[(detailed_results['bt_stake'] > 0) & (detailed_results['bt_bet_on'] != -1)]
+    bet_placed = detailed_results[(detailed_results['bt_stake'] > 0) | (detailed_results['bt_bet_on'] != -1)]
 
     # Calculate backtesting period information
     start_date = detailed_results['bt_date_column'].min()
@@ -300,7 +308,6 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
         # Drawdown Analysis
         'Max Drawdown [%]': max_drawdown * 100,
         'Max. Drawdown Duration [bets]': max_drawdown_duration,
-
 
         # Betting Performance
         'Win Rate [%]': calculate_win_rate(bet_placed) * 100,

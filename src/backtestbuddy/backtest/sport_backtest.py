@@ -379,11 +379,22 @@ class ModelBacktest(BaseBacktest):
             predictions = self.model.predict(X_test[feature_columns])
             probabilities = self.model.predict_proba(X_test[feature_columns])
 
+            # Check if probabilities match the number of odds columns
+            if probabilities.shape[1] != len(self.odds_columns):
+                raise ValueError(
+                    f"The model's predict_proba output shape ({probabilities.shape[1]}) "
+                    f"doesn't match the number of odds columns ({len(self.odds_columns)}). "
+                    f"Expected shape: (n_samples, {len(self.odds_columns)})"
+                    "\nExample of correct output:"
+                    f"\n[[0.3, 0.7], [0.6, 0.4], ...] for {len(self.odds_columns)} outcomes"
+                    "\nExample of incorrect output:"
+                    "\n[[1.0], [1.0], ...] or [[0.3, 0.5, 0.2], [0.1, 0.7, 0.2], ...]"
+                )
+
             for i, (prediction, probs) in enumerate(zip(predictions, probabilities)):
                 odds = X_test.iloc[i][self.odds_columns].tolist()
                 actual_outcome = y_test.iloc[i]
 
-                
                 # Ensure probs match the number of odds
                 if len(probs) != len(odds):
                     raise ValueError(f"Number of probabilities ({len(probs)}) doesn't match number of odds ({len(odds)})")

@@ -2,8 +2,6 @@
 
 Welcome to the official documentation for BacktestBuddy!
 
-> **Note:** The following features are currently under development and not yet implemented:
-
 BacktestBuddy is an open-source Python package for backtesting various trading and betting strategies, including:
 
 - Sports betting (✅ Done)

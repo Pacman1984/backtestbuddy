@@ -21,6 +21,7 @@ setup(
         "scipy>=1.0.0",
         "plotly>=4.14.0",
         "scikit-learn>=0.24.0",
+        "nbformat>=4.2.0",
     ],
     extras_require={
         "dev": [

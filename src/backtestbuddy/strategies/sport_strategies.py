@@ -88,7 +88,7 @@ class FixedStake(BaseStrategy):
             self.initial_bankroll = bankroll
 
         if self.stake < 1:
-            return self.initial_bankroll * self.stake
+            return bankroll * self.stake
         else:
             return min(self.stake, bankroll)
 
@@ -101,8 +101,9 @@ class FixedStake(BaseStrategy):
             return odds.index(min(odds))
 
     def get_bet_details(self, odds: List[float], current_bankroll: float, model_probs: Optional[List[float]] = None, prediction: Optional[int] = None) -> Tuple[float, int, Dict[str, Any]]:
+        stake = self.calculate_stake(odds, current_bankroll, model_probs=model_probs)
         bet_on = prediction if prediction is not None else odds.index(min(odds))
-        return self.stake, bet_on, {}  # Return an empty dictionary as additional_info
+        return stake, bet_on, {}  # Return an empty dictionary as additional_info
 
     def __str__(self) -> str:
         if self.stake < 1:

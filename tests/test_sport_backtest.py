@@ -75,6 +75,33 @@ class TestModelBacktest:
         assert 'bt_stake' in backtest.detailed_results.columns
         assert (backtest.detailed_results['bt_stake'] == 100).all()
 
+    def test_fixed_stake_percentage_strategy(self, sample_data, dummy_model):
+        # Test with percentage stake (0.5 = 50%)
+        backtest = ModelBacktest(
+            data=sample_data,
+            odds_columns=['odds_1', 'odds_2'],
+            outcome_column='outcome',
+            date_column='date',
+            model=dummy_model,
+            initial_bankroll=1000,
+            strategy=FixedStake(stake=0.5)  # 50% stake
+        )
+        backtest.run()
+        
+        # Check that stakes are correctly calculated as percentage of bankroll
+        results = backtest.detailed_results
+        
+        # First bet should be 50% of 1000 = 500
+        assert results['bt_stake'].iloc[0] == 500
+        
+        # Subsequent bets should be 50% of the current bankroll
+        for i in range(1, len(results)):
+            expected_stake = results['bt_starting_bankroll'].iloc[i] * 0.5
+            assert results['bt_stake'].iloc[i] == pytest.approx(expected_stake)
+            
+        # All stakes should be less than or equal to the current bankroll
+        assert (results['bt_stake'] <= results['bt_starting_bankroll']).all()
+
     def test_kelly_criterion_strategy(self, sample_data, dummy_model, kelly_strategy):
         backtest = ModelBacktest(
             data=sample_data,

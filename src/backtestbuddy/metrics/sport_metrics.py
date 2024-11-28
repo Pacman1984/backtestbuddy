@@ -56,6 +56,10 @@ def calculate_sharpe_ratio(detailed_results: pd.DataFrame, return_period: int = 
     # Annualize the standard deviation by multiplying with sqrt(output_period)
     annualized_std_return = returns.std() * np.sqrt(output_period)
     
+    # Add check for zero standard deviation
+    if annualized_std_return == 0:
+        return 0.0  # or float('inf') if you prefer
+    
     # Calculate and return the Sharpe Ratio
     return annualized_mean_return / annualized_std_return
 
@@ -191,6 +195,10 @@ def calculate_calmar_ratio(detailed_results: pd.DataFrame, return_period: int = 
     peak = cumulative_returns.cummax()
     drawdown = (cumulative_returns - peak) / peak
     max_drawdown = drawdown.min()
+    
+    # Add check for zero maximum drawdown
+    if max_drawdown == 0:
+        return 0.0  # or float('inf') if you prefer
     
     # Annualize the mean return by multiplying with output_period
     annualized_mean_return = returns.mean() * output_period

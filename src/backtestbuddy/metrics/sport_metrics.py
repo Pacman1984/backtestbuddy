@@ -269,6 +269,15 @@ def calculate_highest_odds(detailed_results: pd.DataFrame) -> Tuple[float, float
     
     return highest_winning_odds, highest_losing_odds
 
+def calculate_avg_roi_per_bet(detailed_results: pd.DataFrame) -> float:
+    """
+    Calculate the average ROI per bet.
+    Only considers rows where a bet was placed.
+    """
+    bet_placed = detailed_results[(detailed_results['bt_stake'] > 0) | (detailed_results['bt_bet_on'] != -1)]
+    roi_per_bet = bet_placed['bt_profit'] / bet_placed['bt_stake'] * 100
+    return roi_per_bet.mean() if len(roi_per_bet) > 0 else 0
+
 def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
     """
     Calculate all metrics and return them in a dictionary.
@@ -303,6 +312,7 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
 
         # Overall Performance
         'ROI [%]': calculate_roi(detailed_results) * 100,
+        'Avg. ROI per Bet [%]': calculate_avg_roi_per_bet(detailed_results),
         'Total Profit [$]': calculate_total_profit(detailed_results),
         'Bankroll Final [$]': bankroll_final,
         'Bankroll Peak [$]': bankroll_peak,

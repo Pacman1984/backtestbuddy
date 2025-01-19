@@ -86,6 +86,9 @@ backtest.plot_odds_distribution()
 
 ## Changelog
 
+### Version 0.1.5 (2024-01-19)
+- Fixed pandas SettingWithCopyWarning in metrics calculation
+
 ### Version 0.1.4 (2024-01-19)
 - Added new metrics:
   - Average ROI per Year [%]

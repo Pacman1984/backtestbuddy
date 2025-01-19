@@ -283,12 +283,13 @@ def calculate_avg_roi_per_year(detailed_results: pd.DataFrame) -> float:
     Calculate the average ROI per year.
     Only considers rows where a bet was placed.
     """
-    bet_placed = detailed_results[(detailed_results['bt_stake'] > 0) | (detailed_results['bt_bet_on'] != -1)]
+    # Create an explicit copy of the filtered DataFrame
+    bet_placed = detailed_results[(detailed_results['bt_stake'] > 0) | (detailed_results['bt_bet_on'] != -1)].copy()
     if bet_placed.empty:
         return 0
     
     # Convert date column to datetime if it's not already
-    bet_placed['bt_date_column'] = pd.to_datetime(bet_placed['bt_date_column'])
+    bet_placed.loc[:, 'bt_date_column'] = pd.to_datetime(bet_placed['bt_date_column'])
     
     # Group by year and calculate ROI for each year
     yearly_roi = bet_placed.groupby(bet_placed['bt_date_column'].dt.year).apply(

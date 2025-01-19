@@ -83,3 +83,24 @@ backtest.plot()
 backtest.plot_odds_distribution()
 
 ```
+
+## Changelog
+
+### Version 0.1.4 (2024-01-19)
+- Added new metrics:
+  - Average ROI per Year [%]
+  - Risk-Adjusted Annual ROI [-] (Avg. ROI per Year / Max Drawdown)
+
+### Version 0.1.3 (2024-01-18)
+- Added new metric:
+  - Average ROI per Bet [%]
+
+### Version 0.1.2 (2023-11-28)
+- Added bookie simulation functionality
+- Enhanced plotting capabilities
+- Improved documentation
+
+### Version 0.1.1 (2023-11-18)
+- Initial release with sports betting functionality
+- Basic metrics and visualization tools
+- Core backtesting framework

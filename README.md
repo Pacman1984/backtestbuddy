@@ -86,13 +86,23 @@ backtest.plot_odds_distribution()
 
 ## Changelog
 
+### Version 0.1.9 (2025-01-19)
+- Added micro/macro perspectives for annual ROI:
+  - 'Avg. ROI per Year [%]' → 'Avg. ROI per Year [%] (micro)' - averages individual yearly ROIs
+  - Added 'Avg. ROI per Year [%] (macro)' - total ROI divided by number of years
+
+### Version 0.1.8 (2025-01-19)
+- Improved ROI metrics clarity:
+  - Renamed ROI metrics for better understanding:
+    - 'Avg. ROI per Bet [%]' → 'Avg. ROI per Bet [%] (micro)' - averages individual bet ROIs
+    - Added 'Avg. ROI per Bet [%] (macro)' - total ROI divided by number of bets
+
 ### Version 0.1.7 (2025-01-19)
 - Fixed ROI calculations:
   - Modified `calculate_avg_roi_per_year` to calculate annual ROI by dividing total ROI by number of years
   - Improved handling of empty DataFrames in ROI calculations
   - Added better handling of edge cases (same day, zero years) in ROI calculations
   - Added proper docstrings and test cases for ROI calculations
-
 
 ### Version 0.1.6 (2025-01-19)
 - Fixed ROI calculations:

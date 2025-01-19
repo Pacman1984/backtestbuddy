@@ -143,3 +143,215 @@ class TestCalculateAllMetrics:
         assert metrics['Total Profit [$]'] == 500
         assert metrics['Win Rate [%]'] == 50.0
         assert metrics['Total Bets'] == 10
+
+class TestCalculateAverageROIPerBet:
+    def test_consistent_profits_micro(self):
+        """Test case with consistent profits for micro-averaging"""
+        data = pd.DataFrame({
+            'bt_stake': [100, 100, 100],
+            'bt_profit': [20, 20, 20],
+            'bt_bet_on': [1, 1, 1]
+        })
+        assert calculate_avg_roi_per_bet_micro(data) == 20.0  # (20/100) * 100 = 20%
+
+    def test_mixed_profits_losses_micro(self):
+        """Test case with mixed profits and losses for micro-averaging"""
+        data = pd.DataFrame({
+            'bt_stake': [100, 100, 100],
+            'bt_profit': [50, -50, 0],
+            'bt_bet_on': [1, 1, 1]
+        })
+        assert calculate_avg_roi_per_bet_micro(data) == 0.0  # Average of (50%, -50%, 0%) = 0%
+
+    def test_empty_dataframe_micro(self):
+        """Test case with empty DataFrame for micro-averaging"""
+        data = pd.DataFrame({
+            'bt_stake': [],
+            'bt_profit': [],
+            'bt_bet_on': []
+        })
+        assert calculate_avg_roi_per_bet_micro(data) == 0.0
+
+    def test_no_bets_placed_micro(self):
+        """Test case with no bets placed for micro-averaging"""
+        data = pd.DataFrame({
+            'bt_stake': [0, 0, 0],
+            'bt_profit': [0, 0, 0],
+            'bt_bet_on': [-1, -1, -1]
+        })
+        assert calculate_avg_roi_per_bet_micro(data) == 0.0
+
+    def test_consistent_profits_macro(self):
+        """Test case with consistent profits for macro-averaging"""
+        data = pd.DataFrame({
+            'bt_starting_bankroll': [1000] * 3,
+            'bt_ending_bankroll': [1000, 1100, 1200],
+            'bt_stake': [100, 100, 100],
+            'bt_profit': [20, 20, 20],
+            'bt_bet_on': [1, 1, 1]
+        })
+        # Total ROI = (1200 - 1000) / 1000 = 0.2 = 20%
+        # Number of bets = 3
+        # Macro ROI per bet = 20% / 3 = 6.67%
+        assert calculate_avg_roi_per_bet_macro(data) == pytest.approx(6.67, rel=1e-2)
+
+    def test_mixed_profits_losses_macro(self):
+        """Test case with mixed profits and losses for macro-averaging"""
+        data = pd.DataFrame({
+            'bt_starting_bankroll': [1000] * 3,
+            'bt_ending_bankroll': [1000, 1050, 1100],
+            'bt_stake': [100, 100, 100],
+            'bt_profit': [50, -50, 100],
+            'bt_bet_on': [1, 1, 1]
+        })
+        # Total ROI = (1100 - 1000) / 1000 = 0.1 = 10%
+        # Number of bets = 3
+        # Macro ROI per bet = 10% / 3 = 3.33%
+        assert calculate_avg_roi_per_bet_macro(data) == pytest.approx(3.33, rel=1e-2)
+
+    def test_empty_dataframe_macro(self):
+        """Test case with empty DataFrame for macro-averaging"""
+        data = pd.DataFrame({
+            'bt_starting_bankroll': [],
+            'bt_ending_bankroll': [],
+            'bt_stake': [],
+            'bt_profit': [],
+            'bt_bet_on': []
+        })
+        assert calculate_avg_roi_per_bet_macro(data) == 0.0
+
+    def test_no_bets_placed_macro(self):
+        """Test case with no bets placed for macro-averaging"""
+        data = pd.DataFrame({
+            'bt_starting_bankroll': [1000] * 3,
+            'bt_ending_bankroll': [1000] * 3,
+            'bt_stake': [0, 0, 0],
+            'bt_profit': [0, 0, 0],
+            'bt_bet_on': [-1, -1, -1]
+        })
+        assert calculate_avg_roi_per_bet_macro(data) == 0.0
+
+class TestCalculateAverageROIPerYear:
+    def test_single_year_profits(self):
+        """Test case with single year consistent profits"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2023-01-01', '2023-06-01', '2023-12-31']),
+            'bt_starting_bankroll': [1000] * 3,
+            'bt_ending_bankroll': [1000, 1200, 1500],
+            'bt_profit': [0, 200, 300],
+            'bt_bet_on': [1, 1, 1]
+        })
+        # Total ROI = (1500 - 1000) / 1000 = 0.5 = 50%
+        # Time period = 1 year
+        # Annual ROI ≈ 50%
+        assert calculate_avg_roi_per_year(data) == pytest.approx(50.0, rel=5e-2)
+
+    def test_multiple_years_mixed(self):
+        """Test case with multiple years and different performance"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime([
+                '2021-01-01',  # Start
+                '2023-12-31'   # End (3 years)
+            ]),
+            'bt_starting_bankroll': [1000] * 2,
+            'bt_ending_bankroll': [1000, 2500],
+            'bt_bet_on': [1, 1]
+        })
+        # Total ROI = (2500 - 1000) / 1000 = 1.5 = 150%
+        # Time period = 3 years
+        # Annual ROI ≈ 50%
+        assert calculate_avg_roi_per_year(data) == pytest.approx(50.0, rel=5e-2)
+
+    def test_partial_year(self):
+        """Test case with partial year"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime([
+                '2023-01-01',  # Start
+                '2023-06-30'   # End (0.5 years)
+            ]),
+            'bt_starting_bankroll': [1000] * 2,
+            'bt_ending_bankroll': [1000, 1250],
+            'bt_bet_on': [1, 1]
+        })
+        # Total ROI = (1250 - 1000) / 1000 = 0.25 = 25%
+        # Time period ≈ 0.5 years (180 days)
+        # Annual ROI ≈ 50%
+        assert calculate_avg_roi_per_year(data) == pytest.approx(50.0, rel=5e-2)
+
+    def test_empty_dataframe(self):
+        """Test case with empty DataFrame"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.Series(dtype='datetime64[ns]'),
+            'bt_starting_bankroll': [],
+            'bt_ending_bankroll': [],
+            'bt_bet_on': []
+        })
+        assert calculate_avg_roi_per_year(data) == 0.0  # Keep exact comparison for edge case
+
+    def test_same_day(self):
+        """Test case with same day (zero years)"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2023-01-01', '2023-01-01']),
+            'bt_starting_bankroll': [1000, 1000],
+            'bt_ending_bankroll': [1000, 1100],
+            'bt_bet_on': [1, 1]
+        })
+        assert calculate_avg_roi_per_year(data) == 0.0  # Keep exact comparison for edge case
+
+class TestCalculateRiskAdjustedAnnualROI:
+    def test_normal_case_multi_year(self):
+        """Test case with multiple years, positive returns and drawdown"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime([
+                '2021-01-01',  # Start
+                '2023-12-31'   # End (3 years)
+            ]),
+            'bt_starting_bankroll': [1000] * 2,
+            'bt_ending_bankroll': [1000, 1150],  # 15% total ROI over 3 years ≈ 5% annual
+            'bt_bet_on': [1] * 2
+        })
+        # Total ROI = (1150 - 1000) / 1000 = 0.15 = 15%
+        # Time period = 3 years
+        # Annual ROI ≈ 5%
+        # Max drawdown = 0
+        # Risk-adjusted = 0 (due to no drawdown)
+        result = calculate_risk_adjusted_annual_roi(data)
+        assert result == pytest.approx(5.0, rel=5e-2)
+
+    def test_complete_loss_multi_year(self):
+        """Test case with complete loss over multiple years"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime([
+                '2021-01-01',  # Start
+                '2023-12-31'   # End (3 years)
+            ]),
+            'bt_starting_bankroll': [1000] * 2,
+            'bt_ending_bankroll': [1000, 800],  # -20% total ROI over 3 years ≈ -6.67% annual
+            'bt_bet_on': [1] * 2
+        })
+        # Total ROI = (800 - 1000) / 1000 = -0.2 = -20%
+        # Time period = 3 years
+        # Annual ROI ≈ -6.67%
+        # Max drawdown = 0.2
+        # Risk-adjusted ≈ -33.35
+        result = calculate_risk_adjusted_annual_roi(data)
+        assert result < 0
+        assert result == pytest.approx(-33.35, rel=5e-2)
+
+    def test_no_drawdown_multi_year(self):
+        """Test case with no drawdown over multiple years"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime([
+                '2021-01-01',  # Start
+                '2023-12-31'   # End (3 years)
+            ]),
+            'bt_starting_bankroll': [1000] * 2,
+            'bt_ending_bankroll': [1000, 1300],  # 30% total ROI over 3 years ≈ 10% annual
+            'bt_bet_on': [1] * 2
+        })
+        # Total ROI = (1300 - 1000) / 1000 = 0.3 = 30%
+        # Time period = 3 years
+        # Annual ROI ≈ 10%
+        # Max drawdown = 0
+        # Risk-adjusted = 0 (due to no drawdown)
+        assert calculate_risk_adjusted_annual_roi(data) == pytest.approx(10.0, rel=5e-2)

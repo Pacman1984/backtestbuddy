@@ -278,6 +278,44 @@ def calculate_avg_roi_per_bet(detailed_results: pd.DataFrame) -> float:
     roi_per_bet = bet_placed['bt_profit'] / bet_placed['bt_stake'] * 100
     return roi_per_bet.mean() if len(roi_per_bet) > 0 else 0
 
+def calculate_avg_roi_per_year(detailed_results: pd.DataFrame) -> float:
+    """
+    Calculate the average ROI per year.
+    Only considers rows where a bet was placed.
+    """
+    bet_placed = detailed_results[(detailed_results['bt_stake'] > 0) | (detailed_results['bt_bet_on'] != -1)]
+    if bet_placed.empty:
+        return 0
+    
+    # Convert date column to datetime if it's not already
+    bet_placed['bt_date_column'] = pd.to_datetime(bet_placed['bt_date_column'])
+    
+    # Group by year and calculate ROI for each year
+    yearly_roi = bet_placed.groupby(bet_placed['bt_date_column'].dt.year).apply(
+        lambda x: (x['bt_ending_bankroll'].iloc[-1] - x['bt_starting_bankroll'].iloc[0]) / x['bt_starting_bankroll'].iloc[0] * 100
+    )
+    
+    return yearly_roi.mean() if len(yearly_roi) > 0 else 0
+
+def calculate_risk_adjusted_annual_roi(detailed_results: pd.DataFrame) -> float:
+    """
+    Calculate the Risk-Adjusted Annual ROI.
+    This metric divides the average yearly ROI by the maximum drawdown,
+    providing a measure of return per unit of downside risk.
+    A higher value indicates better risk-adjusted annual performance.
+    
+    Returns:
+        float: Risk-Adjusted Annual ROI or 0 if max_drawdown is 0
+    """
+    avg_yearly_roi = calculate_avg_roi_per_year(detailed_results)
+    max_drawdown = calculate_max_drawdown(detailed_results)
+    
+    # Avoid division by zero
+    if max_drawdown == 0:
+        return 0.0
+    
+    return abs(avg_yearly_roi / max_drawdown)
+
 def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
     """
     Calculate all metrics and return them in a dictionary.
@@ -313,6 +351,8 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
         # Overall Performance
         'ROI [%]': calculate_roi(detailed_results) * 100,
         'Avg. ROI per Bet [%]': calculate_avg_roi_per_bet(detailed_results),
+        'Avg. ROI per Year [%]': calculate_avg_roi_per_year(detailed_results),
+        'Risk-Adjusted Annual ROI [-]': calculate_risk_adjusted_annual_roi(detailed_results),
         'Total Profit [$]': calculate_total_profit(detailed_results),
         'Bankroll Final [$]': bankroll_final,
         'Bankroll Peak [$]': bankroll_peak,

@@ -331,6 +331,77 @@ def calculate_avg_roi_per_bet_macro(detailed_results: pd.DataFrame) -> float:
     
     return (total_roi / num_bets) * 100 if num_bets > 0 else 0
 
+def calculate_avg_roi_per_year_micro(detailed_results: pd.DataFrame) -> float:
+    """
+    Calculate the micro-average ROI per year by averaging individual yearly ROIs.
+    
+    This function:
+    1. Groups data by year
+    2. Calculates ROI for each year individually
+    3. Takes the average of these yearly ROIs
+    
+    Args:
+        detailed_results (pd.DataFrame): DataFrame containing detailed results of the backtest.
+    
+    Returns:
+        float: The micro-average annual ROI as a percentage (average of individual yearly ROIs).
+        Returns 0.0 for empty DataFrames or when no bets are placed.
+    """
+    if len(detailed_results) == 0:
+        return 0.0
+        
+    # Convert date column to datetime if it's not already
+    dates = pd.to_datetime(detailed_results['bt_date_column'])
+    
+    # Add year column for grouping
+    detailed_results = detailed_results.copy()
+    detailed_results['year'] = dates.dt.year
+    
+    # Group by year and calculate ROI for each year
+    yearly_rois = []
+    for year, group in detailed_results.groupby('year'):
+        initial_bankroll = group['bt_starting_bankroll'].iloc[0]
+        final_bankroll = group['bt_ending_bankroll'].iloc[-1]
+        yearly_roi = ((final_bankroll - initial_bankroll) / initial_bankroll) * 100
+        yearly_rois.append(yearly_roi)
+    
+    # Return average of yearly ROIs
+    return np.mean(yearly_rois) if yearly_rois else 0.0
+
+def calculate_avg_roi_per_year_macro(detailed_results: pd.DataFrame) -> float:
+    """
+    Calculate the macro-average ROI per year by dividing total ROI by number of years.
+    
+    This function:
+    1. Calculates total ROI for the entire period
+    2. Divides by the number of years to get average annual ROI
+    
+    Args:
+        detailed_results (pd.DataFrame): DataFrame containing detailed results of the backtest.
+    
+    Returns:
+        float: The macro-average annual ROI as a percentage (total ROI divided by years).
+        Returns 0.0 for empty DataFrames or when duration is 0.
+    """
+    if len(detailed_results) == 0:
+        return 0.0
+        
+    # Calculate total ROI for the entire period
+    total_roi = calculate_roi(detailed_results)
+    
+    # Convert date column to datetime if it's not already
+    dates = pd.to_datetime(detailed_results['bt_date_column'])
+    
+    # Calculate the number of years (including partial years)
+    years = (dates.max() - dates.min()).days / 365.25
+    
+    # Avoid division by zero
+    if years == 0:
+        return 0.0
+    
+    # Return the annual ROI as a percentage
+    return (total_roi / years) * 100
+
 def calculate_avg_roi_per_year(detailed_results: pd.DataFrame) -> float:
     """
     Calculate the average ROI per year by dividing the total ROI by the number of years in the dataset.
@@ -421,7 +492,8 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
         'ROI [%]': calculate_roi(detailed_results) * 100,
         'Avg. ROI per Bet [%] (micro)': calculate_avg_roi_per_bet_micro(detailed_results),
         'Avg. ROI per Bet [%] (macro)': calculate_avg_roi_per_bet_macro(detailed_results),
-        'Avg. ROI per Year [%]': calculate_avg_roi_per_year(detailed_results),
+        'Avg. ROI per Year [%] (micro)': calculate_avg_roi_per_year_micro(detailed_results),
+        'Avg. ROI per Year [%] (macro)': calculate_avg_roi_per_year_macro(detailed_results),
         'Risk-Adjusted Annual ROI [-]': calculate_risk_adjusted_annual_roi(detailed_results),
         'Total Profit [$]': calculate_total_profit(detailed_results),
         'Bankroll Final [$]': bankroll_final,

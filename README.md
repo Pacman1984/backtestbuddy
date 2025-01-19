@@ -86,15 +86,29 @@ backtest.plot_odds_distribution()
 
 ## Changelog
 
-### Version 0.1.5 (2024-01-19)
+### Version 0.1.7 (2025-01-19)
+- Fixed ROI calculations:
+  - Modified `calculate_avg_roi_per_year` to calculate annual ROI by dividing total ROI by number of years
+  - Improved handling of empty DataFrames in ROI calculations
+  - Added better handling of edge cases (same day, zero years) in ROI calculations
+  - Added proper docstrings and test cases for ROI calculations
+
+
+### Version 0.1.6 (2025-01-19)
+- Fixed ROI calculations:
+  - Average ROI per Bet now correctly calculates per-bet returns
+  - Average ROI per Year now uses total profits and stakes per year
+  - Risk-Adjusted Annual ROI improved to handle edge cases
+
+### Version 0.1.5 (2025-01-19)
 - Fixed pandas SettingWithCopyWarning in metrics calculation
 
-### Version 0.1.4 (2024-01-19)
+### Version 0.1.4 (2025-01-19)
 - Added new metrics:
   - Average ROI per Year [%]
   - Risk-Adjusted Annual ROI [-] (Avg. ROI per Year / Max Drawdown)
 
-### Version 0.1.3 (2024-01-18)
+### Version 0.1.3 (2025-01-18)
 - Added new metric:
   - Average ROI per Bet [%]
 

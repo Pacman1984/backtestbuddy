@@ -133,11 +133,12 @@ class KellyCriterion(BaseStrategy):
         self.min_prob = min_prob
 
     def calculate_kelly_fraction(self, odds: float, prob: float) -> float:
-        if prob > self.min_prob:
-            adj_odds = odds - 1
-            kelly = (prob * adj_odds - (1 - prob)) / adj_odds
-            return max(0, kelly)
-        return 0
+        """
+        Calculate the Kelly fraction for a given odds and probability.
+        """
+        adj_odds = odds - 1
+        kelly = (prob * adj_odds - (1 - prob)) / adj_odds
+        return max(0, kelly)
 
     def calculate_stake(self, odds: List[float], bankroll: float, model_probs: Optional[List[float]] = None, **kwargs) -> float:
         if model_probs is None:
@@ -148,6 +149,10 @@ class KellyCriterion(BaseStrategy):
             return 0
 
         kelly_fraction = self.calculate_kelly_fraction(odds[bet_on], model_probs[bet_on])
+        
+        # Apply min_prob filter here
+        if model_probs[bet_on] < self.min_prob:
+            return 0
 
         if kelly_fraction > self.min_kelly:
             return min(kelly_fraction * self.downscaling, self.max_bet) * bankroll
@@ -158,14 +163,24 @@ class KellyCriterion(BaseStrategy):
         if model_probs is None:
             return -1
         kelly_fractions = [self.calculate_kelly_fraction(odd, prob) for odd, prob in zip(odds, model_probs)]
-        return kelly_fractions.index(max(kelly_fractions))
+        max_kelly = max(kelly_fractions)
+        if max_kelly <= self.min_kelly:
+            return -1
+        best_idx = kelly_fractions.index(max_kelly)
+        # Check min_prob here after finding the best Kelly fraction
+        if model_probs[best_idx] < self.min_prob:
+            return -1
+        return best_idx
 
     def get_bet_details(self, odds: List[float], bankroll: float, model_probs: Optional[List[float]] = None, prediction: Optional[int] = None, **kwargs: Any) -> Tuple[float, int, Dict[str, Any]]:
-        stake, bet_on = super().get_bet_details(odds, bankroll, model_probs, prediction, **kwargs)
+        # First calculate all Kelly fractions for info
         kelly_fractions = []
         if model_probs:
-            for odd, prob in zip(odds, model_probs):
-                kelly_fractions.append(self.calculate_kelly_fraction(odd, prob))
+            kelly_fractions = [self.calculate_kelly_fraction(odd, prob) for odd, prob in zip(odds, model_probs)]
+        
+        # Then get stake and bet_on
+        stake = self.calculate_stake(odds, bankroll, model_probs=model_probs, **kwargs)
+        bet_on = self.select_bet(odds, model_probs, prediction, **kwargs)
         
         additional_info = {f"kelly_fraction_{i}": kf for i, kf in enumerate(kelly_fractions)}
         return stake, bet_on, additional_info

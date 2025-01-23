@@ -351,7 +351,7 @@ class TestCalculateRiskAdjustedAnnualROI:
         # Time period = 3 years
         # Annual ROI ≈ 5%
         # Max drawdown = 0
-        # Risk-adjusted = 0 (due to no drawdown)
+        # Risk-adjusted = 5% (same as ROI since no drawdown)
         result = calculate_risk_adjusted_annual_roi(data)
         assert result == pytest.approx(5.0, rel=5e-2)
 
@@ -390,5 +390,26 @@ class TestCalculateRiskAdjustedAnnualROI:
         # Time period = 3 years
         # Annual ROI ≈ 10%
         # Max drawdown = 0
-        # Risk-adjusted = 0 (due to no drawdown)
+        # Risk-adjusted = 10% (same as ROI since no drawdown)
         assert calculate_risk_adjusted_annual_roi(data) == pytest.approx(10.0, rel=5e-2)
+
+    def test_negative_roi_with_drawdown(self):
+        """Test case with negative ROI and drawdown to ensure consistent sign"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime([
+                '2021-01-01',  # Start
+                '2021-06-30',  # Mid-year drawdown
+                '2021-12-31'   # End (1 year)
+            ]),
+            'bt_starting_bankroll': [1000] * 3,
+            'bt_ending_bankroll': [1000, 800, 900],  # -10% total ROI, with -20% max drawdown
+            'bt_bet_on': [1] * 3
+        })
+        # Total ROI = (900 - 1000) / 1000 = -0.1 = -10%
+        # Time period = 1 year
+        # Annual ROI = -10%
+        # Max drawdown = 0.2 (20%)
+        # Risk-adjusted = -10% / 0.2 = -50%
+        result = calculate_risk_adjusted_annual_roi(data)
+        assert result < 0  # Should be negative since ROI is negative
+        assert result == pytest.approx(-50.0, rel=5e-2)

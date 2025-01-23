@@ -402,57 +402,22 @@ def calculate_avg_roi_per_year_macro(detailed_results: pd.DataFrame) -> float:
     # Return the annual ROI as a percentage
     return (total_roi / years) * 100
 
-def calculate_avg_roi_per_year(detailed_results: pd.DataFrame) -> float:
-    """
-    Calculate the average ROI per year by dividing the total ROI by the number of years in the dataset.
-    
-    This function takes the total Return on Investment (ROI) for the entire period and divides it
-    by the number of years in the dataset to get an average annual ROI.
-    Returns 0.0 for empty DataFrames.
-    
-    Args:
-        detailed_results (pd.DataFrame): DataFrame containing detailed results of the backtest.
-    
-    Returns:
-        float: The average annual ROI as a percentage.
-    """
-    if len(detailed_results) == 0:
-        return 0.0
-        
-    # Calculate total ROI for the entire period
-    total_roi = calculate_roi(detailed_results)
-    
-    # Convert date column to datetime if it's not already
-    dates = pd.to_datetime(detailed_results['bt_date_column'])
-    
-    # Calculate the number of years (including partial years)
-    years = (dates.max() - dates.min()).days / 365.25
-    
-    # Avoid division by zero
-    if years == 0:
-        return 0.0
-    
-    # Return the annual ROI as a percentage
-    return (total_roi / years) * 100
-
 def calculate_risk_adjusted_annual_roi(detailed_results: pd.DataFrame) -> float:
     """
     Calculate the Risk-Adjusted Annual ROI.
-    This metric divides the average yearly ROI by the maximum drawdown,
+    This metric divides the average yearly ROI (macro) by the maximum drawdown,
     providing a measure of return per unit of downside risk.
     A higher value indicates better risk-adjusted annual performance.
     
     Returns:
         float: Risk-Adjusted Annual ROI or 0 if max_drawdown is 0
     """
-    avg_yearly_roi = calculate_avg_roi_per_year(detailed_results)
+    avg_yearly_roi = calculate_avg_roi_per_year_macro(detailed_results)
     max_drawdown = calculate_max_drawdown(detailed_results)
     
     # Avoid division by zero and handle edge cases
     if max_drawdown == 0:
-        return 0.0
-    if max_drawdown == -1:  # Complete loss
-        return -avg_yearly_roi  # Return negative value to indicate poor risk-adjusted performance
+        return avg_yearly_roi  # Return the ROI itself if there's no drawdown
     
     return avg_yearly_roi / abs(max_drawdown)
 

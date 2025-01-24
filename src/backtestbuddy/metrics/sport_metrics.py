@@ -421,6 +421,38 @@ def calculate_risk_adjusted_annual_roi(detailed_results: pd.DataFrame) -> float:
     
     return avg_yearly_roi / abs(max_drawdown)
 
+def calculate_cagr(detailed_results: pd.DataFrame) -> float:
+    """
+    Calculate the Compound Annual Growth Rate (CAGR).
+    
+    CAGR is the geometric mean of annual returns, calculated as:
+    CAGR = (End Value / Start Value)^(1/years) - 1
+    
+    Args:
+        detailed_results (pd.DataFrame): DataFrame containing detailed results of the backtest.
+    
+    Returns:
+        float: The CAGR as a percentage. Returns 0.0 for empty DataFrames or when duration is 0.
+    """
+    if len(detailed_results) == 0:
+        return 0.0
+        
+    # Get initial and final values
+    initial_value = detailed_results['bt_starting_bankroll'].iloc[0]
+    final_value = detailed_results['bt_ending_bankroll'].iloc[-1]
+    
+    # Calculate time period in years
+    dates = pd.to_datetime(detailed_results['bt_date_column'])
+    years = (dates.max() - dates.min()).days / 365.25
+    
+    # Avoid division by zero
+    if years == 0 or initial_value == 0:
+        return 0.0
+    
+    # Calculate CAGR
+    cagr = (pow(final_value / initial_value, 1/years) - 1) * 100
+    return cagr
+
 def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
     """
     Calculate all metrics and return them in a dictionary.
@@ -459,6 +491,7 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
         'Avg. ROI per Bet [%] (macro)': calculate_avg_roi_per_bet_macro(detailed_results),
         'Avg. ROI per Year [%] (micro)': calculate_avg_roi_per_year_micro(detailed_results),
         'Avg. ROI per Year [%] (macro)': calculate_avg_roi_per_year_macro(detailed_results),
+        'CAGR [%]': calculate_cagr(detailed_results),
         'Risk-Adjusted Annual ROI [-]': calculate_risk_adjusted_annual_roi(detailed_results),
         'Total Profit [$]': calculate_total_profit(detailed_results),
         'Bankroll Final [$]': bankroll_final,

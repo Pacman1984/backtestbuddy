@@ -413,3 +413,80 @@ class TestCalculateRiskAdjustedAnnualROI:
         result = calculate_risk_adjusted_annual_roi(data)
         assert result < 0  # Should be negative since ROI is negative
         assert result == pytest.approx(-50.0, rel=5e-2)
+
+class TestCalculateCAGR:
+    def test_normal_case_multi_year(self):
+        """Test CAGR calculation over multiple years with consistent growth"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2020-01-01', '2021-01-01', '2022-01-01']),
+            'bt_starting_bankroll': [1000] * 3,
+            'bt_ending_bankroll': [1000, 1200, 1440]  # 20% growth each year
+        })
+        # CAGR = (1440/1000)^(1/2) - 1 = 0.20 = 20%
+        assert calculate_cagr(data) == pytest.approx(20.0, rel=1e-2)
+
+    def test_single_year_growth(self):
+        """Test CAGR calculation for a single year period"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2023-01-01', '2023-12-31']),
+            'bt_starting_bankroll': [1000] * 2,
+            'bt_ending_bankroll': [1000, 1500]  # 50% growth
+        })
+        # For single year, CAGR equals simple return
+        assert calculate_cagr(data) == pytest.approx(50.0, rel=1e-2)
+
+    def test_partial_year(self):
+        """Test CAGR calculation for a period less than a year"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2023-01-01', '2023-07-01']),  # 6 months
+            'bt_starting_bankroll': [1000] * 2,
+            'bt_ending_bankroll': [1000, 1200]  # 20% growth in 6 months
+        })
+        # CAGR = (1200/1000)^(1/0.5) - 1 = 0.44 = 44%
+        assert calculate_cagr(data) == pytest.approx(44.4, rel=1e-2)
+
+    def test_negative_growth(self):
+        """Test CAGR calculation with negative growth"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2020-01-01', '2021-01-01', '2022-01-01']),
+            'bt_starting_bankroll': [1000] * 3,
+            'bt_ending_bankroll': [1000, 800, 640]  # -20% each year
+        })
+        # CAGR = (640/1000)^(1/2) - 1 = -0.20 = -20%
+        assert calculate_cagr(data) == pytest.approx(-20.0, rel=1e-2)
+
+    def test_no_change(self):
+        """Test CAGR calculation when there's no change in value"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2020-01-01', '2021-01-01']),
+            'bt_starting_bankroll': [1000] * 2,
+            'bt_ending_bankroll': [1000, 1000]
+        })
+        assert calculate_cagr(data) == 0.0
+
+    def test_empty_dataframe(self):
+        """Test CAGR calculation with empty DataFrame"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.Series([], dtype='datetime64[ns]'),
+            'bt_starting_bankroll': pd.Series([], dtype='float64'),
+            'bt_ending_bankroll': pd.Series([], dtype='float64')
+        })
+        assert calculate_cagr(data) == 0.0
+
+    def test_same_day(self):
+        """Test CAGR calculation when start and end dates are the same"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2023-01-01', '2023-01-01']),
+            'bt_starting_bankroll': [1000] * 2,
+            'bt_ending_bankroll': [1000, 1200]
+        })
+        assert calculate_cagr(data) == 0.0
+
+    def test_zero_initial_value(self):
+        """Test CAGR calculation with zero initial value"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2023-01-01', '2024-01-01']),
+            'bt_starting_bankroll': [0, 0],
+            'bt_ending_bankroll': [0, 1000]
+        })
+        assert calculate_cagr(data) == 0.0

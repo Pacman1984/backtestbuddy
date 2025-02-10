@@ -89,6 +89,7 @@ backtest.plot_odds_distribution()
 ### Version 0.1.10 (2025-01-23)
 - Fixed Risk-Adjusted Annual ROI calculation to use macro ROI and handle negative values correctly
 - Kelly fractions are now always returned in bet details regardless of min_kelly and min_prob filters
+- Added Compound Annual Growth Rate (CAGR) metric 'CAGR [%]'
 
 ### Version 0.1.9 (2025-01-19)
 - Added micro/macro perspectives for annual ROI:

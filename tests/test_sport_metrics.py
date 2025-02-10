@@ -482,6 +482,26 @@ class TestCalculateCAGR:
         })
         assert calculate_cagr(data) == 0.0
 
+    def test_lost_all(self):
+        """Test CAGR calculation when all bets are lost and bankroll goes to near zero"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2023-01-01', '2023-06-01', '2023-12-31']),
+            'bt_starting_bankroll': [1000] * 3,
+            'bt_ending_bankroll': [1000, 100, 10]  # Lost 99% of bankroll in one year
+        })
+        # CAGR = (10/1000)^(1/1) - 1 = -0.99 = -99%
+        assert calculate_cagr(data) == pytest.approx(-99.0, rel=1e-2)
+
+    def test_complete_loss(self):
+        """Test CAGR calculation when bankroll goes to exactly zero"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2023-01-01', '2023-06-01', '2023-12-31']),
+            'bt_starting_bankroll': [1000] * 3,
+            'bt_ending_bankroll': [1000, 500, 0]  # Complete loss to zero
+        })
+        # CAGR = (0/1000)^(1/1) - 1 = -100%
+        assert calculate_cagr(data) == -100.0
+
     def test_zero_initial_value(self):
         """Test CAGR calculation with zero initial value"""
         data = pd.DataFrame({

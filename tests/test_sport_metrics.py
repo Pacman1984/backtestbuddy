@@ -110,7 +110,7 @@ class TestCalculateSortinoRatio:
         assert result > 0, f"Expected positive Sortino ratio, got {result}"
     
     def test_sortino_ratio_constant_negative_returns(self):
-        """Test Sortino ratio when all negative returns are the same (zero std deviation)"""
+        """Test Sortino ratio when all negative returns are the same"""
         data = pd.DataFrame({
             'bt_date_column': pd.date_range(start='2023-01-01', periods=11),
             'bt_starting_bankroll': [1000] * 11,
@@ -119,8 +119,9 @@ class TestCalculateSortinoRatio:
             'bt_bet_on': [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, -1]
         })
         result = calculate_sortino_ratio(data)
-        # Should return 0.0 when all negative returns are identical
-        assert result == 0.0, f"Expected 0.0 for constant negative returns, got {result}"
+        # Should return a positive value - even with constant negative returns, 
+        # downside deviation is calculable using the correct method
+        assert result > 0, f"Expected positive Sortino ratio, got {result}"
     
     def test_sortino_ratio_no_negative_returns(self):
         """Test Sortino ratio when there are no negative returns (zero downside deviation)"""
@@ -132,8 +133,8 @@ class TestCalculateSortinoRatio:
             'bt_bet_on': [1] * 5
         })
         result = calculate_sortino_ratio(data)
-        # Should return 0.0 when there are no negative returns
-        assert result == 0.0, f"Expected 0.0 for no negative returns, got {result}"
+        # Should return inf when there are no negative returns and positive mean return
+        assert result == float('inf'), f"Expected inf for no negative returns, got {result}"
 
 class TestCalculateCalmarRatio:
     def test_calculate_calmar_ratio(self, sample_data):

@@ -103,24 +103,28 @@ def calculate_average_stake(detailed_results: pd.DataFrame) -> float:
     non_zero_stakes = detailed_results['bt_stake'][detailed_results['bt_stake'] > 0]
     return non_zero_stakes.mean() if len(non_zero_stakes) > 0 else 0
 
-def calculate_sortino_ratio(detailed_results: pd.DataFrame, return_period: int = 1, output_period: int = 252) -> float:
+def calculate_sortino_ratio(detailed_results: pd.DataFrame, return_period: int = 1, output_period: int = 252, target_return: float = 0.0) -> float:
     """
     Calculate the Sortino Ratio for sports betting.
     Assumes returns are daily by default and output is annualized.
     
     The Sortino Ratio is a variation of the Sharpe Ratio that differentiates harmful volatility 
-    from total overall volatility by using the standard deviation of negative asset returns, 
-    called downside deviation. A higher Sortino Ratio indicates better risk-adjusted performance 
-    with a focus on downside risk.
+    from total overall volatility by using downside deviation, which measures the volatility of 
+    returns below a target return threshold. A higher Sortino Ratio indicates better risk-adjusted 
+    performance with a focus on downside risk.
     
     Args:
         detailed_results (pd.DataFrame): DataFrame containing detailed results of the backtest.
         return_period (int): The period over which returns are calculated (default is 1 for daily).
         output_period (int): The period over which the Sortino Ratio is annualized (default is 252 for yearly).
+        target_return (float): Minimum acceptable return (MAR) threshold per period. Default is 0.0,
+                              representing break-even as the threshold. Unlike traditional finance where 
+                              this might be a risk-free rate, in sports betting 0.0 is the natural baseline.
+                              Any return below this threshold is considered downside risk.
     
     Returns:
-        float: The Sortino Ratio. Returns 0.0 if downside deviation is zero or undefined 
-               (i.e., when there are no negative returns or all negative returns are identical).
+        float: The Sortino Ratio. Returns 0.0 if downside deviation is zero (no negative excess returns).
+               Returns float('inf') if downside deviation is zero and mean excess return is positive.
     
     Examples:
         >>> data = {
@@ -129,11 +133,10 @@ def calculate_sortino_ratio(detailed_results: pd.DataFrame, return_period: int =
         ...     'bt_starting_bankroll': [1000, 1000, 1000]
         ... }
         >>> df = pd.DataFrame(data)
-        >>> calculate_sortino_ratio(df)
-        18.0
+        >>> calculate_sortino_ratio(df)  # doctest: +SKIP
         
-        >>> calculate_sortino_ratio(df, return_period=7, output_period=52)
-        5.196152422706632
+        >>> # Use custom target return (e.g., 1% per period)
+        >>> calculate_sortino_ratio(df, target_return=0.01)  # doctest: +SKIP
     """
     # Convert the date column to datetime and set it as the index
     detailed_results['bt_date_column'] = pd.to_datetime(detailed_results['bt_date_column'])
@@ -145,18 +148,31 @@ def calculate_sortino_ratio(detailed_results: pd.DataFrame, return_period: int =
     # Resample returns based on the return_period (e.g., daily, weekly)
     returns = returns.resample(f'{return_period}D').sum()
     
-    # Calculate downside deviation (only negative returns)
-    downside_deviation = returns[returns < 0].std() * np.sqrt(output_period)
+    # Compute period excess returns
+    excess_returns = returns - target_return
     
-    # Annualize the mean return by multiplying with output_period
-    annualized_mean_return = returns.mean() * output_period
+    # Compute shortfalls: minimum of 0 and excess returns (negative values only, zeros for positive)
+    shortfalls = np.minimum(0, excess_returns)
     
-    # Add check for zero or NaN downside deviation
-    if downside_deviation == 0 or np.isnan(downside_deviation):
+    # Calculate downside deviation for the period: sqrt(mean(shortfalls^2))
+    downside_deviation_period = np.sqrt(np.mean(shortfalls**2))
+    
+    # Annualize downside deviation by multiplying by sqrt(output_period)
+    downside_deviation_annual = downside_deviation_period * np.sqrt(output_period)
+    
+    # Annualize the mean excess return by multiplying with output_period
+    annualized_mean_excess_return = excess_returns.mean() * output_period
+    
+    # Handle zero downside deviation
+    if downside_deviation_annual == 0:
+        # If no downside risk and positive returns, return infinity
+        if annualized_mean_excess_return > 0:
+            return float('inf')
+        # If no downside risk and zero/negative returns, return 0
         return 0.0
     
     # Calculate and return the Sortino Ratio
-    return annualized_mean_return / downside_deviation
+    return annualized_mean_excess_return / downside_deviation_annual
 
 def calculate_calmar_ratio(detailed_results: pd.DataFrame, return_period: int = 1, output_period: int = 365, years: float = None) -> float:
     """

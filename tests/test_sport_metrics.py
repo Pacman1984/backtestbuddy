@@ -158,6 +158,14 @@ class TestCalculateDrawdowns:
         assert max_dd == 0.0
         assert max_dur == 0
 
+    def test_calculate_drawdowns_equal_peaks_uses_last_peak(self):
+        # Equal peaks at indices 1 and 2; trough at index 4
+        # Expect start at last peak (index 2), duration = 4 - 2 + 1 = 3
+        data = pd.DataFrame({'bt_ending_bankroll': [100, 120, 120, 110, 90]})
+        max_dd, max_dur = calculate_drawdowns(data)
+        assert max_dd == pytest.approx(0.25, rel=1e-6)
+        assert max_dur == 3
+
 class TestCalculateBestWorstBets:
     def test_calculate_best_worst_bets(self, sample_data):
         best, worst = calculate_best_worst_bets(sample_data)

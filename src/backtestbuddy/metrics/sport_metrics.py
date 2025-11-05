@@ -281,13 +281,13 @@ def calculate_drawdowns(detailed_results: pd.DataFrame) -> Tuple[float, int]:
     if max_drawdown == 0:
         return 0.0, 0
 
-    # Find the end of the maximum drawdown period
-    max_drawdown_end = np.argmax(drawdown)
-    # Find the start of the maximum drawdown period
-    max_drawdown_start = np.argmax(equity_curve[:max_drawdown_end])
-    max_duration = max_drawdown_end - max_drawdown_start + 1  # +1 to include both start and end
+    # End index of the maximum drawdown (trough)
+    end = np.argmax(drawdown)
+    # Start index as the last peak before (and including) the trough
+    start = np.where(equity_curve[:end + 1] == cummax[:end + 1])[0][-1]
+    duration = end - start + 1
 
-    return max_drawdown, max_duration
+    return max_drawdown, duration
 
 def calculate_best_worst_bets(detailed_results: pd.DataFrame) -> Tuple[float, float]:
     """

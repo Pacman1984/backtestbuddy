@@ -404,21 +404,38 @@ def calculate_avg_roi_per_year_macro(detailed_results: pd.DataFrame) -> float:
 
 def calculate_risk_adjusted_annual_roi(detailed_results: pd.DataFrame) -> float:
     """
-    Calculate the Risk-Adjusted Annual ROI.
-    This metric divides the average yearly ROI (macro) by the maximum drawdown,
-    providing a measure of return per unit of downside risk.
-    A higher value indicates better risk-adjusted annual performance.
+    Calculate the Risk-Adjusted Annual ROI as a unitless ratio.
+    
+    This metric divides the average yearly ROI (as a decimal) by the maximum drawdown 
+    magnitude (as a positive decimal), providing a unitless measure of return per unit 
+    of downside risk. A higher value indicates better risk-adjusted annual performance.
+    
+    Args:
+        detailed_results (pd.DataFrame): DataFrame containing detailed results of the backtest.
     
     Returns:
-        float: Risk-Adjusted Annual ROI or 0 if max_drawdown is 0
+        float: Unitless risk-adjusted ratio. Returns float('inf') if max_drawdown is 0.
+    
+    Examples:
+        >>> # 10% annual return with 15% max drawdown
+        >>> # Result: 0.10 / 0.15 = 0.667 (unitless ratio)
+        
+        >>> # -10% annual return with 20% max drawdown  
+        >>> # Result: -0.10 / 0.20 = -0.50 (negative ratio indicates losses)
     """
-    avg_yearly_roi = calculate_avg_roi_per_year_macro(detailed_results)
+    # Get average yearly ROI as percentage
+    avg_yearly_roi_pct = calculate_avg_roi_per_year_macro(detailed_results)
+    # Convert to decimal (10.0% -> 0.10)
+    avg_yearly_roi = avg_yearly_roi_pct / 100.0
+    
+    # Get maximum drawdown as decimal (already in correct units)
     max_drawdown = calculate_max_drawdown(detailed_results)
     
     # Avoid division by zero and handle edge cases
     if max_drawdown == 0:
-        return avg_yearly_roi  # Return the ROI itself if there's no drawdown
+        return float('inf')  # Infinite ratio when there's no drawdown
     
+    # Divide by positive magnitude of drawdown to get unitless ratio
     return avg_yearly_roi / abs(max_drawdown)
 
 def calculate_cagr(detailed_results: pd.DataFrame) -> float:

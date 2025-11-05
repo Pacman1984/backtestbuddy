@@ -337,7 +337,7 @@ class TestCalculateAverageROIPerYear:
 
 class TestCalculateRiskAdjustedAnnualROI:
     def test_normal_case_multi_year(self):
-        """Test case with multiple years, positive returns and drawdown"""
+        """Test case with multiple years, positive returns and no drawdown"""
         data = pd.DataFrame({
             'bt_date_column': pd.to_datetime([
                 '2021-01-01',  # Start
@@ -349,11 +349,11 @@ class TestCalculateRiskAdjustedAnnualROI:
         })
         # Total ROI = (1150 - 1000) / 1000 = 0.15 = 15%
         # Time period = 3 years
-        # Annual ROI ≈ 5%
+        # Annual ROI ≈ 5% = 0.05 decimal
         # Max drawdown = 0
-        # Risk-adjusted = 5% (same as ROI since no drawdown)
+        # Risk-adjusted = inf (no drawdown)
         result = calculate_risk_adjusted_annual_roi(data)
-        assert result == pytest.approx(5.0, rel=5e-2)
+        assert result == float('inf')
 
     def test_complete_loss_multi_year(self):
         """Test case with complete loss over multiple years"""
@@ -368,12 +368,12 @@ class TestCalculateRiskAdjustedAnnualROI:
         })
         # Total ROI = (800 - 1000) / 1000 = -0.2 = -20%
         # Time period = 3 years
-        # Annual ROI ≈ -6.67%
-        # Max drawdown = 0.2
-        # Risk-adjusted ≈ -33.35
+        # Annual ROI ≈ -6.67% = -0.0667 decimal
+        # Max drawdown = -0.2 (20%)
+        # Risk-adjusted = -0.0667 / 0.2 = -0.3335 (unitless ratio)
         result = calculate_risk_adjusted_annual_roi(data)
         assert result < 0
-        assert result == pytest.approx(-33.35, rel=5e-2)
+        assert result == pytest.approx(-0.3335, rel=5e-2)
 
     def test_no_drawdown_multi_year(self):
         """Test case with no drawdown over multiple years"""
@@ -388,10 +388,10 @@ class TestCalculateRiskAdjustedAnnualROI:
         })
         # Total ROI = (1300 - 1000) / 1000 = 0.3 = 30%
         # Time period = 3 years
-        # Annual ROI ≈ 10%
+        # Annual ROI ≈ 10% = 0.10 decimal
         # Max drawdown = 0
-        # Risk-adjusted = 10% (same as ROI since no drawdown)
-        assert calculate_risk_adjusted_annual_roi(data) == pytest.approx(10.0, rel=5e-2)
+        # Risk-adjusted = inf (no drawdown)
+        assert calculate_risk_adjusted_annual_roi(data) == float('inf')
 
     def test_negative_roi_with_drawdown(self):
         """Test case with negative ROI and drawdown to ensure consistent sign"""
@@ -407,12 +407,12 @@ class TestCalculateRiskAdjustedAnnualROI:
         })
         # Total ROI = (900 - 1000) / 1000 = -0.1 = -10%
         # Time period = 1 year
-        # Annual ROI = -10%
-        # Max drawdown = 0.2 (20%)
-        # Risk-adjusted = -10% / 0.2 = -50%
+        # Annual ROI = -10% = -0.10 decimal
+        # Max drawdown = -0.2 (20%)
+        # Risk-adjusted = -0.10 / 0.2 = -0.50 (unitless ratio)
         result = calculate_risk_adjusted_annual_roi(data)
         assert result < 0  # Should be negative since ROI is negative
-        assert result == pytest.approx(-50.0, rel=5e-2)
+        assert result == pytest.approx(-0.50, rel=5e-2)
 
 class TestCalculateCAGR:
     def test_normal_case_multi_year(self):

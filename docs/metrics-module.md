@@ -84,6 +84,34 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
   6. Calmar Ratio = `annualized_mean_return / abs(max_drawdown)`
 - Columns used: `bt_profit`, `bt_starting_bankroll`, `bt_date_column`
 
+### Risk-Adjusted Annual ROI
+
+- Description: Measures the annual return per unit of maximum drawdown risk as a unitless ratio. Returns `inf` when there is no drawdown.
+- Formula: $Risk-Adjusted\ Annual\ ROI = \frac{Average\ Yearly\ ROI\ (decimal)}{|Maximum\ Drawdown|}$
+- Calculation:
+  1. Calculate average yearly ROI as percentage using macro method:
+     ```python
+     avg_yearly_roi_pct = calculate_avg_roi_per_year_macro(detailed_results)
+     ```
+  2. Convert to decimal: `avg_yearly_roi = avg_yearly_roi_pct / 100.0`
+  3. Calculate maximum drawdown:
+     ```python
+     equity_curve = detailed_results['bt_ending_bankroll']
+     peak = equity_curve.cummax()
+     drawdown = (equity_curve - peak) / peak
+     max_drawdown = drawdown.min()
+     ```
+  4. Risk-Adjusted Annual ROI:
+     - If `max_drawdown == 0`: returns `float('inf')`
+     - Otherwise: `avg_yearly_roi / abs(max_drawdown)`
+- Output: Unitless ratio (e.g., 0.667 means 0.667 units of annual return per unit of drawdown)
+- Interpretation:
+  - Positive values: Strategy is profitable
+  - Negative values: Strategy is unprofitable
+  - Higher absolute values: Better risk-adjusted performance
+  - `inf`: Perfect performance with no drawdown
+- Columns used: `bt_starting_bankroll`, `bt_ending_bankroll`, `bt_date_column`
+
 ## Drawdown Analysis
 
 ### Max Drawdown

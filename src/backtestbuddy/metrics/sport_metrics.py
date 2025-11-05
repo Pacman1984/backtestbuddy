@@ -119,7 +119,8 @@ def calculate_sortino_ratio(detailed_results: pd.DataFrame, return_period: int =
         output_period (int): The period over which the Sortino Ratio is annualized (default is 252 for yearly).
     
     Returns:
-        float: The Sortino Ratio.
+        float: The Sortino Ratio. Returns 0.0 if downside deviation is zero or undefined 
+               (i.e., when there are no negative returns or all negative returns are identical).
     
     Examples:
         >>> data = {
@@ -149,6 +150,10 @@ def calculate_sortino_ratio(detailed_results: pd.DataFrame, return_period: int =
     
     # Annualize the mean return by multiplying with output_period
     annualized_mean_return = returns.mean() * output_period
+    
+    # Add check for zero or NaN downside deviation
+    if downside_deviation == 0 or np.isnan(downside_deviation):
+        return 0.0
     
     # Calculate and return the Sortino Ratio
     return annualized_mean_return / downside_deviation

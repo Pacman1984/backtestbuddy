@@ -97,8 +97,43 @@ class TestCalculateAverageStake:
         assert calculate_average_stake(data) == 0
 
 class TestCalculateSortinoRatio:
-    def test_calculate_sortino_ratio(self, sample_data):
-        assert calculate_sortino_ratio(sample_data) > 0
+    def test_calculate_sortino_ratio(self):
+        """Test Sortino ratio with varying negative returns"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.date_range(start='2023-01-01', periods=11),
+            'bt_starting_bankroll': [1000] * 11,
+            'bt_profit': [0, 100, -30, 150, -60, 150, -40, 150, -70, 150, 0],  # Varying negative returns
+            'bt_stake': [100] * 10 + [0],
+            'bt_bet_on': [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, -1]
+        })
+        result = calculate_sortino_ratio(data)
+        assert result > 0, f"Expected positive Sortino ratio, got {result}"
+    
+    def test_sortino_ratio_constant_negative_returns(self):
+        """Test Sortino ratio when all negative returns are the same (zero std deviation)"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.date_range(start='2023-01-01', periods=11),
+            'bt_starting_bankroll': [1000] * 11,
+            'bt_profit': [0, 100, -50, 150, -50, 150, -50, 150, -50, 150, 0],  # All negative returns same
+            'bt_stake': [100] * 10 + [0],
+            'bt_bet_on': [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, -1]
+        })
+        result = calculate_sortino_ratio(data)
+        # Should return 0.0 when all negative returns are identical
+        assert result == 0.0, f"Expected 0.0 for constant negative returns, got {result}"
+    
+    def test_sortino_ratio_no_negative_returns(self):
+        """Test Sortino ratio when there are no negative returns (zero downside deviation)"""
+        data = pd.DataFrame({
+            'bt_date_column': pd.date_range(start='2023-01-01', periods=5),
+            'bt_starting_bankroll': [1000] * 5,
+            'bt_profit': [100, 200, 50, 150, 100],  # All positive
+            'bt_stake': [100] * 5,
+            'bt_bet_on': [1] * 5
+        })
+        result = calculate_sortino_ratio(data)
+        # Should return 0.0 when there are no negative returns
+        assert result == 0.0, f"Expected 0.0 for no negative returns, got {result}"
 
 class TestCalculateCalmarRatio:
     def test_calculate_calmar_ratio(self, sample_data):

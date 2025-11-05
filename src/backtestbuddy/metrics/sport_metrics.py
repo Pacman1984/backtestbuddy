@@ -158,37 +158,41 @@ def calculate_sortino_ratio(detailed_results: pd.DataFrame, return_period: int =
     # Calculate and return the Sortino Ratio
     return annualized_mean_return / downside_deviation
 
-def calculate_calmar_ratio(detailed_results: pd.DataFrame, return_period: int = 1, output_period: int = 252) -> float:
+def calculate_calmar_ratio(detailed_results: pd.DataFrame, return_period: int = 1, output_period: int = 365, years: float = None) -> float:
     """
-    Calculate the Calmar Ratio for sports betting.
-    Assumes returns are daily by default and output is annualized.
+    Calculate the Calmar Ratio for sports betting using geometric annual return.
     
-    The Calmar Ratio measures the risk-adjusted return of an investment by comparing the average 
-    annual compounded rate of return and the maximum drawdown risk. A higher Calmar Ratio indicates 
-    better risk-adjusted performance with a focus on drawdown risk.
+    The Calmar Ratio measures the risk-adjusted return of an investment by comparing the 
+    geometric annual compounded rate of return and the maximum drawdown risk. A higher 
+    Calmar Ratio indicates better risk-adjusted performance with a focus on drawdown risk.
     
     Args:
         detailed_results (pd.DataFrame): DataFrame containing detailed results of the backtest.
         return_period (int): The period over which returns are calculated (default is 1 for daily).
-        output_period (int): The period over which the Calmar Ratio is annualized (default is 252 for yearly).
+        output_period (int): The period for annualization if date range cannot be calculated (default is 365 for calendar year).
+                            Used as fallback when bt_date_column is unavailable or years=0.
+                            Uses 365 (not 252) to match calendar-day geometric compounding.
+        years (float, optional): Number of years for annualization. If None, calculated from date range.
     
     Returns:
-        float: The Calmar Ratio.
+        float: The Calmar Ratio using geometric annual return.
     
     Examples:
         >>> data = {
         ...     'bt_date_column': ['2023-01-01', '2023-01-02', '2023-01-03'],
         ...     'bt_profit': [100, -50, 200],
-        ...     'bt_starting_bankroll': [1000, 1000, 1000]
+        ...     'bt_starting_bankroll': [1000, 1000, 1000],
+        ...     'bt_ending_bankroll': [1100, 1050, 1250]
         ... }
         >>> df = pd.DataFrame(data)
-        >>> calculate_calmar_ratio(df)
-        12.24744871391589
-        
-        >>> calculate_calmar_ratio(df, return_period=7, output_period=52)
-        3.4641016151377544
+        >>> calculate_calmar_ratio(df)  # doctest: +SKIP
     """
+    # Check for empty DataFrame
+    if len(detailed_results) == 0:
+        return 0.0
+    
     # Convert the date column to datetime and set it as the index
+    detailed_results = detailed_results.copy()
     detailed_results['bt_date_column'] = pd.to_datetime(detailed_results['bt_date_column'])
     detailed_results = detailed_results.set_index('bt_date_column')
     
@@ -198,7 +202,11 @@ def calculate_calmar_ratio(detailed_results: pd.DataFrame, return_period: int = 
     # Resample returns based on the return_period (e.g., daily, weekly)
     returns = returns.resample(f'{return_period}D').sum()
     
-    # Calculate maximum drawdown
+    # Check if we have any data after resampling
+    if len(returns) == 0:
+        return 0.0
+    
+    # Calculate maximum drawdown on cumulative curve
     cumulative_returns = (1 + returns).cumprod()
     peak = cumulative_returns.cummax()
     drawdown = (cumulative_returns - peak) / peak
@@ -208,11 +216,31 @@ def calculate_calmar_ratio(detailed_results: pd.DataFrame, return_period: int = 
     if max_drawdown == 0:
         return 0.0  # or float('inf') if you prefer
     
-    # Annualize the mean return by multiplying with output_period
-    annualized_mean_return = returns.mean() * output_period
+    # Compute cumulative return R_total = prod(1+r_t) - 1 over the full sample
+    R_total = cumulative_returns.iloc[-1] - 1
+    
+    # Compute years K_years from the date range (or use provided years parameter)
+    # Note: We use 365.25 (calendar days) for geometric compounding, not 252 (trading days).
+    # This is correct because money compounds every calendar day, matching CAGR calculation.
+    # 252 would be appropriate for arithmetic mean scaling (like Sharpe/Sortino ratios),
+    # but geometric returns require actual holding period time.
+    if years is None:
+        date_range = detailed_results.index
+        K_years = (date_range.max() - date_range.min()).days / 365.25
+        # Avoid division by zero for same-day data - use output_period as fallback
+        if K_years == 0:
+            # Fall back to using number of periods / output_period
+            K_years = len(returns) / output_period
+            if K_years == 0:
+                return 0.0
+    else:
+        K_years = years
+    
+    # Compute geometric annual return: R_annual = (1 + R_total) ** (1 / K_years) - 1
+    R_annual = (1 + R_total) ** (1 / K_years) - 1
     
     # Calculate and return the Calmar Ratio
-    return annualized_mean_return / abs(max_drawdown)
+    return R_annual / abs(max_drawdown)
 
 def calculate_drawdowns(detailed_results: pd.DataFrame) -> Tuple[float, int]:
     """

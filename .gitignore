@@ -3,3 +3,4 @@
 */*.egg-info/*
 dist/*
 .vscode/settings.json
+.cursor/commands/test-quality-auditor.md

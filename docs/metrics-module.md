@@ -42,35 +42,43 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
 
 ### Sharpe Ratio
 
-- Description: Measures the risk-adjusted return of the betting strategy.
-- Formula: $Sharpe Ratio = \frac{Annualized Mean Return}{Annualized Standard Deviation of Returns}$
+- Description: Measures the risk-adjusted return of the betting strategy using excess returns.
+- Formula: $Sharpe Ratio = \frac{Annualized Mean Excess Return}{Annualized Standard Deviation of Excess Returns}$ where excess returns are $r - r_f$ per period ($r_f$ is the risk-free rate, defaulting to 0 for sports betting).
 - Calculation:
   1. Calculate returns: `returns = detailed_results['bt_profit'] / detailed_results['bt_starting_bankroll']`
-  2. Resample returns based on the return period
-  3. Calculate annualized mean return: `annualized_mean_return = returns.mean() * output_period`
-  4. Calculate annualized standard deviation: `annualized_std_return = returns.std() * np.sqrt(output_period)`
-  5. Sharpe Ratio = `annualized_mean_return / annualized_std_return`
+  2. Resample returns based on the return period (e.g., daily, weekly) using `returns.resample(f'{return_period}D').sum()`
+  3. Calculate excess returns per period: `excess_returns = returns - r_f` (where $r_f = 0$ by default)
+  4. Calculate annualized mean excess return: `annualized_mean_excess_return = excess_returns.mean() * output_period`
+  5. Calculate annualized standard deviation of excess returns: `annualized_std_excess_return = excess_returns.std() * np.sqrt(output_period)`
+  6. Sharpe Ratio = `annualized_mean_excess_return / annualized_std_excess_return`
 - Columns used: `bt_profit`, `bt_starting_bankroll`, `bt_date_column`
+- Note: Returns are computed from `bt_profit / bt_starting_bankroll` and resampled according to the return period before calculating excess returns and annualization.
 
 ### Sortino Ratio
 
-- Description: Similar to Sharpe Ratio, but only considers downside risk (negative returns).
-- Formula: $Sortino Ratio = \frac{Annualized Mean Return}{Annualized Downside Deviation}$
+- Description: Similar to Sharpe Ratio, but only considers downside risk relative to a target return threshold.
+- Formula: $Sortino Ratio = \frac{Annualized Mean Excess Return}{Annualized Downside Deviation}$ where downside deviation measures volatility below the target return $\tau$.
+- Target Return ($\tau$): Minimum acceptable return (MAR) threshold per period. Default is 0.0 (break-even), representing the natural baseline for sports betting.
+- Downside Deviation: The annualized standard deviation of returns below the target return, calculated as $\sqrt{\text{mean}(\min(0, r - \tau)^2)}$ per period, then annualized.
 - Calculation:
   1. Calculate returns: `returns = detailed_results['bt_profit'] / detailed_results['bt_starting_bankroll']`
-  2. Resample returns based on the return period
-  3. Calculate downside deviation: `downside_deviation = returns[returns < 0].std() * np.sqrt(output_period)`
-  4. Calculate annualized mean return: `annualized_mean_return = returns.mean() * output_period`
-  5. Sortino Ratio = `annualized_mean_return / downside_deviation`
+  2. Resample returns based on the return period (e.g., daily, weekly) using `returns.resample(f'{return_period}D').sum()`
+  3. Calculate excess returns: `excess_returns = returns - target_return` (where $target\_return = \tau$, default 0.0)
+  4. Calculate shortfalls: `shortfalls = min(0, excess_returns)` (negative excess returns only, zeros for positive)
+  5. Calculate downside deviation per period: `downside_deviation_period = sqrt(mean(shortfalls^2))`
+  6. Annualize downside deviation: `downside_deviation_annual = downside_deviation_period * sqrt(output_period)`
+  7. Calculate annualized mean excess return: `annualized_mean_excess_return = excess_returns.mean() * output_period`
+  8. Sortino Ratio = `annualized_mean_excess_return / downside_deviation_annual`
 - Columns used: `bt_profit`, `bt_starting_bankroll`, `bt_date_column`
+- Note: Returns are computed from `bt_profit / bt_starting_bankroll` and resampled according to the return period. The downside deviation uses the corrected formula $\sqrt{\text{mean}(\min(0, r - \tau)^2)}$ rather than filtering negative returns.
 
 ### Calmar Ratio
 
-- Description: Measures the risk-adjusted return relative to maximum drawdown.
-- Formula: $Calmar Ratio = \frac{Annualized Mean Return}{Absolute Maximum Drawdown}$
+- Description: Measures the risk-adjusted return relative to maximum drawdown using geometric annual return.
+- Formula: $Calmar Ratio = \frac{Geometric Annual Return}{|Maximum Drawdown|}$ where geometric annual return is computed over the lookback period and maximum drawdown magnitude is used in the denominator.
 - Calculation:
   1. Calculate returns: `returns = detailed_results['bt_profit'] / detailed_results['bt_starting_bankroll']`
-  2. Resample returns based on the return period
+  2. Resample returns based on the return period (e.g., daily, weekly) using `returns.resample(f'{return_period}D').sum()`
   3. Calculate cumulative returns: `cumulative_returns = (1 + returns).cumprod()`
   4. Calculate maximum drawdown:
 
@@ -80,9 +88,12 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
      max_drawdown = drawdown.min()
      ```
 
-  5. Calculate annualized mean return: `annualized_mean_return = returns.mean() * output_period`
-  6. Calmar Ratio = `annualized_mean_return / abs(max_drawdown)`
+  5. Calculate total cumulative return: `R_total = cumulative_returns.iloc[-1] - 1`
+  6. Calculate years from date range: `K_years = (date_range.max() - date_range.min()).days / 365.25` (or use provided `years` parameter)
+  7. Calculate geometric annual return: `R_annual = (1 + R_total) ** (1 / K_years) - 1`
+  8. Calmar Ratio = `R_annual / abs(max_drawdown)`
 - Columns used: `bt_profit`, `bt_starting_bankroll`, `bt_date_column`
+- Note: Returns are computed from `bt_profit / bt_starting_bankroll` and resampled according to the return period. The geometric annual return uses compound annual growth rate (CAGR) over the actual time period, not arithmetic mean scaling. The maximum drawdown magnitude (absolute value) is used in the denominator.
 
 ### Risk-Adjusted Annual ROI
 

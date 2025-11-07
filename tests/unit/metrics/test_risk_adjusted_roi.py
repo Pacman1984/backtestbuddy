@@ -1,12 +1,10 @@
 """
-Test to verify units mismatch in Risk-Adjusted Annual ROI calculation.
+Unit tests for risk-adjusted ROI calculation with units verification.
 
-This test checks if there's a units mismatch where:
-- avg_yearly_roi returns a percentage (e.g., 10.0 for 10%)
-- max_drawdown returns a decimal (e.g., -0.15 for 15% drawdown)
-- Dividing percentage by decimal gives incorrect units
+This test module verifies that the risk-adjusted annual ROI calculation
+handles units correctly, converting percentages to decimals as needed
+and returning a unitless ratio.
 """
-
 import pytest
 import pandas as pd
 from backtestbuddy.metrics.sport_metrics import (
@@ -17,7 +15,7 @@ from backtestbuddy.metrics.sport_metrics import (
 
 
 class TestRiskAdjustedUnits:
-    """Test to verify the units mismatch issue."""
+    """Test to verify the units mismatch issue is resolved."""
     
     def test_units_correct_unitless_ratio(self):
         """

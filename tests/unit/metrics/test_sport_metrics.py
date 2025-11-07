@@ -1,3 +1,8 @@
+"""
+Unit tests for sport_metrics module.
+
+Tests all metric calculation functions with deterministic data.
+"""
 import pytest
 import pandas as pd
 import numpy as np
@@ -554,3 +559,4 @@ class TestCalculateCAGR:
             'bt_ending_bankroll': [0, 1000]
         })
         assert calculate_cagr(data) == 0.0
+

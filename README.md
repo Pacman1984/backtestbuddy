@@ -86,6 +86,35 @@ backtest.plot_odds_distribution()
 
 ## Changelog
 
+### Version 0.1.12 (2025-11-07)
+
+**⚠️ Breaking Changes:**
+- **Risk-Adjusted Annual ROI**: Fixed critical units mismatch - now returns unitless ratio (e.g., 0.667) instead of percentage-based values (e.g., 66.67). Values are reduced by 100x. Update any code comparing or thresholding this metric.
+
+**Improvements:**
+- **Sortino Ratio**: Enhanced calculation with proper downside deviation formula and edge case handling (returns 0.0 when downside deviation is zero or undefined)
+- **Calmar Ratio**: Improved calculation using geometric annual return for better accuracy in risk-adjusted performance metrics
+- **Max Drawdown Duration**: Fixed calculation to correctly identify last peak before trough (duration = end - start + 1 from last peak)
+
+**Infrastructure:**
+- Migrated to `uv` package manager for faster dependency resolution
+- Updated minimum Python version to 3.9 (removed support for 3.6, 3.7, 3.8)
+- Modernized dependencies:
+  - numpy: 1.13.3 → 1.26.0
+  - pandas: 0.25 → 1.3.0
+  - matplotlib: 3.0.0 → 3.5.0
+  - scipy: 1.0.0 → 1.7.0
+  - plotly: 4.14.0 → 5.0.0
+  - scikit-learn: 0.24.0 → 1.0.0
+  - nbformat: 4.2.0 → 5.0.0
+- Added Python 3.12 support
+- Fixed package metadata for PyPI compatibility (license field configuration)
+- Updated metrics documentation with precise mathematical formulas
+
+**Testing:**
+- Added comprehensive test suites for Sortino Ratio, Calmar Ratio, and Risk-Adjusted Annual ROI
+- Enhanced test coverage for edge cases and error handling
+
 ### Version 0.1.10 (2025-01-23)
 - Fixed Risk-Adjusted Annual ROI calculation to use macro ROI and handle negative values correctly
 - Kelly fractions are now always returned in bet details regardless of min_kelly and min_prob filters

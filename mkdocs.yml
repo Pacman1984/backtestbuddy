@@ -9,6 +9,7 @@ nav:
       - Backtest Module: backtest-module.md
       - Metrics Module: metrics-module.md
       - Strategies Module: strategies-module.md
+      - Plots Module: plots-module.md
   - Examples: examples.md
   - Change Log: changelog.md
   - Contact: contact.md

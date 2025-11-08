@@ -17,12 +17,15 @@ BacktestBuddy is an open-source Python package for backtesting various trading a
 
 ## Table of Contents
 
-- [Core Concepts](core-concepts.md)
-- [Backtest Module](backtest-module.md)
-- [Metrics Module](metrics-module.md)
-- [Strategies Module](strategies-module.md)
-- [Plots Module](plots-module.md)
-- [Examples](examples.md)
+- [Getting Started](docs/getting-started.md)
+- [Core Concepts](docs/core-concepts.md)
+- [Backtest Module](docs/backtest-module.md)
+- [Metrics Module](docs/metrics-module.md)
+- [Strategies Module](docs/strategies-module.md)
+- [Plots Module](docs/plots-module.md)
+- [Examples](docs/examples.md)
+
+> **📚 Full Documentation**: For the complete documentation with examples and detailed API reference, see the [GitHub repository](https://github.com/Pacman1984/backtestbuddy) or build it locally using `mkdocs serve` after installing dependencies with `pip install backtestbuddy[docs]`.
 
 ## Installation
 

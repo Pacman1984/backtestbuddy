@@ -19,6 +19,7 @@ BacktestBuddy is an open-source Python package for backtesting various trading a
 
 ## Table of Contents
 
+- [Getting Started](getting-started.md)
 - [Core Concepts](core-concepts.md)
 - [Backtest Module](backtest-module.md)
 - [Metrics Module](metrics-module.md)

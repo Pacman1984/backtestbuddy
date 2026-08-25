@@ -95,7 +95,7 @@ backtest.plot_odds_distribution()
 - **Risk-Adjusted Annual ROI**: Fixed critical units mismatch - now returns unitless ratio (e.g., 0.667) instead of percentage-based values (e.g., 66.67). Values are reduced by 100x. Update any code comparing or thresholding this metric.
 
 **Improvements:**
-- **Sortino Ratio**: Enhanced calculation with proper downside deviation formula and edge case handling (returns 0.0 when downside deviation is zero or undefined)
+- **Sortino Ratio**: Enhanced calculation with proper downside deviation formula and edge case handling (`inf` when downside deviation is zero and mean excess return is positive; `0.0` when both are zero)
 - **Calmar Ratio**: Improved calculation using geometric annual return for better accuracy in risk-adjusted performance metrics
 - **Max Drawdown Duration**: Fixed calculation to correctly identify last peak before trough (duration = end - start + 1 from last peak)
 

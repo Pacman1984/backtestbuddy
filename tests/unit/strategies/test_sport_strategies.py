@@ -19,13 +19,11 @@ class TestFixedStake:
         """Test initialization with absolute stake value."""
         strategy = FixedStake(stake=100)
         assert strategy.stake == 100
-        assert strategy.initial_bankroll is None
     
     def test_initialization_with_percentage_stake(self):
         """Test initialization with percentage stake value."""
         strategy = FixedStake(stake=0.1)
         assert strategy.stake == 0.1
-        assert strategy.initial_bankroll is None
     
     def test_calculate_stake_absolute_value(self):
         """Test stake calculation with absolute value."""
@@ -91,6 +89,17 @@ class TestFixedStake:
         assert stake == 100
         assert bet_on == 0
         assert isinstance(additional_info, dict)
+
+    def test_get_bet_details_uses_select_bet_model_probs(self):
+        """Test get_bet_details bets on the highest model probability."""
+        strategy = FixedStake(stake=100)
+        stake, bet_on, _ = strategy.get_bet_details(
+            odds=[2.0, 1.8, 2.5],
+            current_bankroll=1000,
+            model_probs=[0.3, 0.6, 0.1],
+        )
+        assert stake == 100
+        assert bet_on == 1
     
     def test_str_representation_absolute(self):
         """Test string representation for absolute stake."""
@@ -149,6 +158,12 @@ class TestKellyCriterion:
         
         kelly_fraction = strategy.calculate_kelly_fraction(odds, prob)
         assert kelly_fraction == 0  # Negative Kelly should return 0
+
+    def test_calculate_kelly_fraction_odds_at_or_below_one(self):
+        """Test Kelly fraction is 0 when decimal odds are not greater than 1."""
+        strategy = KellyCriterion()
+        assert strategy.calculate_kelly_fraction(1.0, 0.9) == 0.0
+        assert strategy.calculate_kelly_fraction(0.5, 0.9) == 0.0
     
     def test_calculate_kelly_fraction_no_edge(self):
         """Test Kelly fraction calculation with no edge."""

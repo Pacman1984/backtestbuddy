@@ -42,58 +42,44 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
 
 ### Sharpe Ratio
 
-- Description: Measures the risk-adjusted return of the betting strategy using excess returns.
-- Formula: $Sharpe Ratio = \frac{Annualized Mean Excess Return}{Annualized Standard Deviation of Excess Returns}$ where excess returns are $r - r_f$ per period ($r_f$ is the risk-free rate, defaulting to 0 for sports betting).
+- Description: Measures risk-adjusted return using period returns with a risk-free rate of 0.
+- Formula: $Sharpe = \frac{\bar{r} \cdot P}{s \cdot \sqrt{P}}$ where $\bar{r}$ and $s$ are the mean and sample standard deviation (`ddof=1`) of compounded period returns, and $P$ is `output_period` (default 252).
 - Calculation:
-  1. Calculate returns: `returns = detailed_results['bt_profit'] / detailed_results['bt_starting_bankroll']`
-  2. Resample returns based on the return period (e.g., daily, weekly) using `returns.resample(f'{return_period}D').sum()`
-  3. Calculate excess returns per period: `excess_returns = returns - r_f` (where $r_f = 0$ by default)
-  4. Calculate annualized mean excess return: `annualized_mean_excess_return = excess_returns.mean() * output_period`
-  5. Calculate annualized standard deviation of excess returns: `annualized_std_excess_return = excess_returns.std() * np.sqrt(output_period)`
-  6. Sharpe Ratio = `annualized_mean_excess_return / annualized_std_excess_return`
+  1. Per-bet return: `r = bt_profit / bt_starting_bankroll`
+  2. Compound inside each `return_period`-day bucket: `prod(1 + r) - 1` (empty calendar days are not filled with zeros)
+  3. Annualize mean with `* output_period` and sample std with `* sqrt(output_period)`
+  4. Sharpe = annualized mean / annualized std (0 if fewer than two periods or std is 0)
 - Columns used: `bt_profit`, `bt_starting_bankroll`, `bt_date_column`
-- Note: Returns are computed from `bt_profit / bt_starting_bankroll` and resampled according to the return period before calculating excess returns and annualization.
+- Note: This is not excess-return Sharpe with a non-zero $r_f$. Default 252 is a trading-year scale; Calmar and CAGR use calendar years (`days / 365.25`).
 
 ### Sortino Ratio
 
-- Description: Similar to Sharpe Ratio, but only considers downside risk relative to a target return threshold.
-- Formula: $Sortino Ratio = \frac{Annualized Mean Excess Return}{Annualized Downside Deviation}$ where downside deviation measures volatility below the target return $\tau$.
-- Target Return ($\tau$): Minimum acceptable return (MAR) threshold per period. Default is 0.0 (break-even), representing the natural baseline for sports betting.
-- Downside Deviation: The annualized standard deviation of returns below the target return, calculated as $\sqrt{\text{mean}(\min(0, r - \tau)^2)}$ per period, then annualized.
+- Description: Sharpe-style ratio that only penalizes returns below a target $\tau$ (default 0).
+- Formula: $Sortino = \frac{\text{annualized mean excess return}}{\text{annualized downside deviation}}$
+- Downside deviation: $\sqrt{\text{mean}(\min(0, r - \tau)^2)}$ over **all** periods (zeros for upside periods), then $\times \sqrt{P}$. Uses $N$ in the mean, not sample $N-1$.
 - Calculation:
-  1. Calculate returns: `returns = detailed_results['bt_profit'] / detailed_results['bt_starting_bankroll']`
-  2. Resample returns based on the return period (e.g., daily, weekly) using `returns.resample(f'{return_period}D').sum()`
-  3. Calculate excess returns: `excess_returns = returns - target_return` (where $target\_return = \tau$, default 0.0)
-  4. Calculate shortfalls: `shortfalls = min(0, excess_returns)` (negative excess returns only, zeros for positive)
-  5. Calculate downside deviation per period: `downside_deviation_period = sqrt(mean(shortfalls^2))`
-  6. Annualize downside deviation: `downside_deviation_annual = downside_deviation_period * sqrt(output_period)`
-  7. Calculate annualized mean excess return: `annualized_mean_excess_return = excess_returns.mean() * output_period`
-  8. Sortino Ratio = `annualized_mean_excess_return / downside_deviation_annual`
+  1. Same compounded period returns as Sharpe
+  2. `excess = period_return - target_return`
+  3. Downside deviation as above, annualized with `sqrt(output_period)`
+  4. Mean excess annualized with `* output_period`
+  5. Sortino = annualized mean excess / annualized downside deviation
+- Edge cases: `inf` if downside deviation is 0 and mean excess > 0; `0.0` if downside is 0 and mean excess is not positive
 - Columns used: `bt_profit`, `bt_starting_bankroll`, `bt_date_column`
-- Note: Returns are computed from `bt_profit / bt_starting_bankroll` and resampled according to the return period. The downside deviation uses the corrected formula $\sqrt{\text{mean}(\min(0, r - \tau)^2)}$ rather than filtering negative returns.
 
 ### Calmar Ratio
 
-- Description: Measures the risk-adjusted return relative to maximum drawdown using geometric annual return.
-- Formula: $Calmar Ratio = \frac{Geometric Annual Return}{|Maximum Drawdown|}$ where geometric annual return is computed over the lookback period and maximum drawdown magnitude is used in the denominator.
+- Description: Geometric annual return divided by the magnitude of maximum drawdown on the **compounded return curve** (not the bankroll equity curve used by Max Drawdown).
+- Formula: $Calmar = \frac{R_{annual}}{|\text{return-curve max DD}|}$
 - Calculation:
-  1. Calculate returns: `returns = detailed_results['bt_profit'] / detailed_results['bt_starting_bankroll']`
-  2. Resample returns based on the return period (e.g., daily, weekly) using `returns.resample(f'{return_period}D').sum()`
-  3. Calculate cumulative returns: `cumulative_returns = (1 + returns).cumprod()`
-  4. Calculate maximum drawdown:
-
-     ```python
-     peak = cumulative_returns.cummax()
-     drawdown = (cumulative_returns - peak) / peak
-     max_drawdown = drawdown.min()
-     ```
-
-  5. Calculate total cumulative return: `R_total = cumulative_returns.iloc[-1] - 1`
-  6. Calculate years from date range: `K_years = (date_range.max() - date_range.min()).days / 365.25` (or use provided `years` parameter)
-  7. Calculate geometric annual return: `R_annual = (1 + R_total) ** (1 / K_years) - 1`
-  8. Calmar Ratio = `R_annual / abs(max_drawdown)`
+  1. Same compounded period returns as Sharpe
+  2. Wealth index starts at 1, then `cumulative = (1 + r).cumprod()` so the first period can be a drawdown
+  3. Return-curve max DD: `min((cumulative - cummax) / cummax)`
+  4. $R_{total} = cumulative[-1] - 1$
+  5. $K_{years} = (\max date - \min date).days / 365.25$
+  6. $R_{annual} = (1 + R_{total})^{1/K_{years}} - 1$
+  7. Calmar = $R_{annual} / |max DD|$
+- Edge cases: `inf` if drawdown is 0 and $R_{annual} > 0$; `0.0` if there is no data or no drawdown with non-positive return
 - Columns used: `bt_profit`, `bt_starting_bankroll`, `bt_date_column`
-- Note: Returns are computed from `bt_profit / bt_starting_bankroll` and resampled according to the return period. The geometric annual return uses compound annual growth rate (CAGR) over the actual time period, not arithmetic mean scaling. The maximum drawdown magnitude (absolute value) is used in the denominator.
 
 ### Risk-Adjusted Annual ROI
 
@@ -113,7 +99,8 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
      max_drawdown = drawdown.min()
      ```
   4. Risk-Adjusted Annual ROI:
-     - If `max_drawdown == 0`: returns `float('inf')`
+     - If `max_drawdown == 0` and yearly ROI > 0: `float('inf')`
+     - If `max_drawdown == 0` and yearly ROI is not positive: `0.0`
      - Otherwise: `avg_yearly_roi / abs(max_drawdown)`
 - Output: Unitless ratio (e.g., 0.667 means 0.667 units of annual return per unit of drawdown)
 - Interpretation:
@@ -127,51 +114,28 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
 
 ### Max Drawdown
 
-- Description: The largest peak-to-trough decline in the bankroll.
-- Formula: $Max Drawdown = \min(\frac{Trough Value - Peak Value}{Peak Value})$
-- Calculation:
-
-  ```python
-  equity_curve = detailed_results['bt_ending_bankroll']
-  peak = equity_curve.cummax()
-  drawdown = (equity_curve - peak) / peak
-  max_drawdown = drawdown.min()
-  ```
-
+- Description: Largest peak-to-trough decline on the **bankroll** equity curve (`bt_ending_bankroll`).
+- Formula: magnitude $= \max((peak - equity) / peak)$; reported as a **positive** percent in `calculate_all_metrics` (`Max Drawdown [%]`). The helper `calculate_max_drawdown` returns the signed decimal (`-magnitude`).
+- Peak rule: duration starts at the **last** peak at or before the trough (`end - start + 1` rows).
+- Row filter: `calculate_all_metrics` uses placed bets only (`bt_stake > 0` and `bt_bet_on != -1`).
 - Column used: `bt_ending_bankroll`
 
-### Average Drawdown
-
-- Description: The average of all drawdowns during the backtest period.
-- Calculation: Mean of all drawdowns calculated in the `calculate_drawdowns` function
-- Column used: `bt_ending_bankroll`
+This is not the same as Calmar's return-curve drawdown.
 
 ### Max Drawdown Duration
 
-- Description: The longest period (in number of bets) that the bankroll was in a drawdown state.
-- Calculation: Longest consecutive sequence of declining `bt_ending_bankroll` values
-- Column used: `bt_ending_bankroll`
-
-### Average Drawdown Duration
-
-- Description: The average duration of all drawdowns during the backtest period.
-- Calculation: Mean duration of all drawdown periods calculated in the `calculate_drawdowns` function
-- Column used: `bt_ending_bankroll`
-
-### Median Drawdown Duration
-
-- Description: The median duration of all drawdowns during the backtest period.
-- Calculation: Median duration of all drawdown periods calculated in the `calculate_drawdowns` function
+- Description: Inclusive number of **placed bets** from the last peak before the max-drawdown trough to that trough.
+- Calculation: `duration = end - start + 1` on the bet-placed equity curve
 - Column used: `bt_ending_bankroll`
 
 ## Betting Performance Metrics
 
 ### Win Rate
 
-- Description: The percentage of bets that resulted in a profit.
-- Formula: $Win Rate = \frac{Number of Winning Bets}{Total Number of Bets} \times 100\%$
-- Calculation: `(detailed_results['bt_win'].sum() / len(detailed_results)) * 100`
-- Column used: `bt_win`
+- Description: The percentage of **placed** bets that won.
+- Formula: $Win Rate = \frac{Winning Bets}{Placed Bets} \times 100\%$
+- Placed bet: `bt_stake > 0` and `bt_bet_on != -1` (same rule as `_simulate_bet`)
+- Column used: `bt_win`, `bt_stake`, `bt_bet_on`
 
 ### Average Odds
 
@@ -193,8 +157,8 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
 
 ### Average Stake
 
-- Description: The average amount staked per bet.
-- Calculation: `detailed_results['bt_stake'].mean()`
+- Description: The average amount staked per placed bet (zero stakes excluded).
+- Calculation: mean of `bt_stake` where `bt_stake > 0`
 - Column used: `bt_stake`
 
 ### Best Bet
@@ -214,7 +178,7 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
 ### Total Bets
 
 - Description: The total number of bets placed during the backtest period.
-- Calculation: Count of rows in the detailed results dataframe where a bet was placed
+- Calculation: Count of rows where `bt_stake > 0` and `bt_bet_on != -1`
 - Columns used: `bt_stake`, `bt_bet_on`
 
 ### Total Opportunities

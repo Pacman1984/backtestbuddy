@@ -1,3 +1,5 @@
+"""Plotly charts for sports-betting backtest results."""
+
 from typing import Any, Optional
 
 import numpy as np
@@ -5,33 +7,33 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from backtestbuddy.metrics.sport_metrics import calculate_all_metrics
+from backtestbuddy.metrics.sport_metrics import (
+    _equity_drawdown_stats,
+    _filter_placed_bets,
+    calculate_all_metrics,
+)
 
 
 def plot_backtest(backtest: Any) -> go.Figure:
-    """
-    Create a plot of the backtest results, including the bookie strategy and Max Drawdown.
+    """Plot bankroll, ROI, and stake % for placed bets of the main strategy.
 
-    This function generates a plot with three subplots:
-    1. Bankroll over time for both the main strategy and the Bookie strategy, with Max Drawdown highlighted.
-    2. ROI for each bet for the main strategy.
-    3. ROI for each bet for the bookie strategy.
+    Three stacked panels: bankroll over bet number (max-drawdown window
+    highlighted using the last peak before the trough), per-bet ROI, and
+    stake as a percentage of starting bankroll. Bookie results are not
+    plotted.
 
     Args:
-        backtest (Any): An instance of a Backtest class containing the results.
+        backtest: A backtest instance with ``detailed_results``.
 
     Returns:
-        go.Figure: A Plotly figure object containing the backtest results plot.
+        Plotly figure with the three panels.
 
     Example:
-        >>> backtest = YourBacktestClass(...)
-        >>> backtest.run()
         >>> fig = plot_backtest(backtest)
-        >>> fig.show()  # Display the plot
+        >>> fig.show()
     """
-    # Filter main_results to only include games where a bet was placed
     main_results = backtest.detailed_results
-    bet_placed = main_results[(main_results['bt_stake'] > 0) & (main_results['bt_bet_on'] != -1)].copy()
+    bet_placed = _filter_placed_bets(main_results).copy()
 
     # Create a game index for bet_placed
     bet_placed.loc[:, 'game_index'] = range(1, len(bet_placed) + 1)
@@ -95,23 +97,25 @@ def plot_backtest(backtest: Any) -> go.Figure:
         hoverlabel=dict(bgcolor="white", font_size=12),
     )
 
-    # Calculate and highlight Max Drawdown for main strategy
-    cummax = np.maximum.accumulate(bet_placed['bt_ending_bankroll'])
-    drawdown = (cummax - bet_placed['bt_ending_bankroll']) / cummax
-    max_drawdown = np.max(drawdown)
-    max_drawdown_end = np.argmax(drawdown)
-    max_drawdown_start = np.argmax(bet_placed['bt_ending_bankroll'][:max_drawdown_end])
-    max_drawdown_length = max_drawdown_end - max_drawdown_start + 1  # +1 to include both start and end
-
-    fig.add_vrect(
-        x0=bet_placed['game_index'].iloc[max_drawdown_start],
-        x1=bet_placed['game_index'].iloc[max_drawdown_end],
-        fillcolor="rgba(255, 0, 0, 0.2)", opacity=0.5,
-        layer="below", line_width=0,
-        annotation_text=f"Max Drawdown: {max_drawdown:.2%}<br>Length: {max_drawdown_length} bets",
-        annotation_position="top left",
-        row=1, col=1
+    window = _equity_drawdown_stats(
+        bet_placed["bt_ending_bankroll"].to_numpy()
     )
+    if window.magnitude > 0:
+        fig.add_vrect(
+            x0=bet_placed["game_index"].iloc[window.start],
+            x1=bet_placed["game_index"].iloc[window.end],
+            fillcolor="rgba(255, 0, 0, 0.2)",
+            opacity=0.5,
+            layer="below",
+            line_width=0,
+            annotation_text=(
+                f"Max Drawdown: {window.magnitude:.2%}<br>"
+                f"Length: {window.duration} bets"
+            ),
+            annotation_position="top left",
+            row=1,
+            col=1,
+        )
 
     # Calculate metrics
     metrics = calculate_all_metrics(main_results)
@@ -163,8 +167,7 @@ def plot_odds_histogram(backtest: Any, num_bins: Optional[int] = None) -> go.Fig
     Returns:
         go.Figure: A Plotly figure object containing the odds histogram.
     """
-    # Extract odds and outcomes from the main strategy
-    detailed_results = backtest.detailed_results
+    detailed_results = _filter_placed_bets(backtest.detailed_results)
     
     # Find the odds column (it might be named differently)
     odds_column = next((col for col in detailed_results.columns if 'odds' in col.lower()), None)

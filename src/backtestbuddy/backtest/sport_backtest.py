@@ -259,17 +259,22 @@ class BaseBacktest(ABC):
 
     def _simulate_bookie_bet(self, fold: int, index: int, odds: List[float], actual_outcome: int, current_bankroll: float) -> Dict[str, Any]:
         """
-        Simulate a bet using the bookie strategy (betting on the outcome with the lowest odds).
+        Simulate a bet using the bookie strategy (lowest-odds favorite).
+
+        Stake sizing reuses ``self.strategy.calculate_stake`` without model
+        probabilities. KellyCriterion therefore always stakes 0 here; the
+        bookie path is only a valid benchmark with strategies that do not
+        require model probabilities (e.g. FixedStake).
 
         Args:
-            fold (int): The current fold number.
-            index (int): The index of the current data point.
-            odds (List[float]): The odds for each possible outcome.
-            actual_outcome (int): The actual outcome index (0-based).
-            current_bankroll (float): The current bankroll before placing the bet.
+            fold: Current fold number.
+            index: Index of the current data point.
+            odds: Decimal odds for each possible outcome.
+            actual_outcome: Actual outcome index (0-based).
+            current_bankroll: Bankroll before placing the bet.
 
         Returns:
-            Dict[str, Any]: A dictionary containing the result information for the bookie bet.
+            Result row for the bookie bet.
         """
         # For bookie strategy, we still bet on the lowest odds
         bet_on = odds.index(min(odds))

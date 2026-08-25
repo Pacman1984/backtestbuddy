@@ -36,12 +36,11 @@ This method combines `calculate_stake` and `select_bet` to provide complete bet 
 
 #### FixedStake
 
-The `FixedStake` class implements a fixed stake (flat betting) strategy. This strategy bets either a fixed amount or a fixed percentage of the initial bankroll, depending on the stake value.
+The `FixedStake` class implements a fixed-stake strategy. It bets either a fixed dollar amount (`stake >= 1`, capped at current bankroll) or a fixed **percentage of the current bankroll** (`stake < 1`). This is constant-fraction sizing, not a freeze of the opening bankroll.
 
 ##### Attributes (FixedStake)
 
-- `stake` (float): The fixed stake amount to bet.
-- `initial_bankroll` (Union[float, None]): The initial bankroll, set on the first bet.
+- `stake` (float): Absolute amount (>= 1) or current-bankroll fraction (< 1).
 
 ##### Methods (FixedStake)
 
@@ -49,7 +48,9 @@ Implements all methods from `BaseStrategy` with logic specific to fixed stake be
 
 #### KellyCriterion
 
-The `KellyCriterion` class implements a betting strategy based on the Kelly Criterion. This strategy calculates the optimal fraction of the bankroll to bet based on the perceived edge and the odds offered.
+The `KellyCriterion` class implements a betting strategy based on the Kelly Criterion. This strategy calculates the optimal fraction of the **current** bankroll to bet from decimal odds: $f^* = (p(odds-1)-(1-p))/(odds-1)$. Odds `<= 1` yield a fraction of 0.
+
+Bookie simulations call `calculate_stake` without model probabilities, so Kelly always stakes 0 on the bookie path. Use FixedStake if you need a bookie benchmark.
 
 ##### Attributes (KellyCriterion)
 
@@ -81,7 +82,7 @@ def get_default_strategy() -> FixedStake:
 Returns the default betting strategy.
 
 - **Returns:**
-  - `FixedStake`: A FixedStake strategy with a 1% stake of the initial bankroll.
+  - `FixedStake`: 1% of the **current** bankroll (`FixedStake(0.01)`).
 
 ## Adding New Strategies
 

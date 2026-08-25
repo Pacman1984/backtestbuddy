@@ -219,8 +219,14 @@ class TestBacktestWorkflow:
         """Test that model is trained and used for predictions correctly in workflow."""
         class TrackingDummyClassifier(DummyClassifier):
             """DummyClassifier that tracks fit and predict calls."""
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
+            def __init__(
+                self, strategy="stratified", random_state=None, constant=None
+            ):
+                super().__init__(
+                    strategy=strategy,
+                    random_state=random_state,
+                    constant=constant,
+                )
                 self.fit_called = 0
                 self.predict_called = 0
                 self.predict_proba_called = 0

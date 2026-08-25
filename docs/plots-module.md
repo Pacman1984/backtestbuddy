@@ -10,7 +10,7 @@ The `plots` module contains functions for visualizing backtest results and analy
 
 #### `plot_backtest`
 
-Creates a comprehensive plot of the backtest results, including the main strategy performance, bookie strategy comparison, and Max Drawdown visualization.
+Creates a three-panel plot of **placed bets** for the main strategy: bankroll (max drawdown window from the last peak to the trough), per-bet ROI, and stake as a percent of starting bankroll. Bookie results are not plotted.
 
 **Signature:**
 

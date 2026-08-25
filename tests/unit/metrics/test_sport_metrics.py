@@ -30,8 +30,57 @@ class TestCalculateROI:
         assert calculate_roi(data) == 0
 
 class TestCalculateSharpeRatio:
-    def test_calculate_sharpe_ratio(self, sample_data):
-        assert calculate_sharpe_ratio(sample_data) > 0
+    def test_calculate_sharpe_ratio(self):
+        """Test Sharpe equals annualized mean / sample std of period returns."""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(
+                ['2023-01-01', '2023-01-02', '2023-01-03']
+            ),
+            'bt_profit': [100, -50, 200],
+            'bt_starting_bankroll': [1000, 1000, 1000],
+        })
+        # r = [0.10, -0.05, 0.20]
+        # mean = 0.083333..., sample std (ddof=1) = 0.12583057...
+        # Sharpe = mean*252 / (std*sqrt(252))
+        expected = 10.513149660756934
+        assert calculate_sharpe_ratio(data) == pytest.approx(expected)
+
+    def test_sharpe_does_not_mutate_input(self):
+        """Test Sharpe copies the frame instead of writing bt_date_column."""
+        data = pd.DataFrame({
+            'bt_date_column': ['2023-01-01', '2023-01-02', '2023-01-03'],
+            'bt_profit': [100, -50, 200],
+            'bt_starting_bankroll': [1000, 1000, 1000],
+        })
+        original = data['bt_date_column'].tolist()
+        calculate_sharpe_ratio(data)
+        assert data['bt_date_column'].tolist() == original
+
+    def test_sharpe_compounds_same_day_returns(self):
+        """Test two bets on one day use prod(1+r)-1, not a simple sum."""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(
+                ['2023-01-01', '2023-01-01', '2023-01-02']
+            ),
+            'bt_profit': [100, -50, 200],
+            'bt_starting_bankroll': [1000, 1000, 1000],
+        })
+        # Day 1: (1.10)*(0.95)-1 = 0.045; day 2: 0.20
+        # Sharpe of [0.045, 0.20]
+        expected = 17.742697930831255
+        wrong_sum = 18.708286933869704
+        result = calculate_sharpe_ratio(data)
+        assert result == pytest.approx(expected)
+        assert result != pytest.approx(wrong_sum, rel=1e-4)
+
+    def test_sharpe_zero_with_fewer_than_two_periods(self):
+        """Test Sharpe is 0 when there is only one return period."""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2023-01-01']),
+            'bt_profit': [100],
+            'bt_starting_bankroll': [1000],
+        })
+        assert calculate_sharpe_ratio(data) == 0.0
 
 class TestCalculateMaxDrawdown:
     def test_calculate_max_drawdown(self, sample_data):
@@ -66,12 +115,31 @@ class TestCalculateWinRate:
         assert calculate_win_rate(data) == 1.0
 
     def test_calculate_win_rate_mixed(self):
+        """Test win rate ignores no-bet rows among mixed results."""
         data = pd.DataFrame({
             'bt_stake': [100, 0, 100, 100, 0],
             'bt_bet_on': [0, -1, 1, 0, -1],
             'bt_win': [True, None, False, True, None]
         })
         assert calculate_win_rate(data) == 2/3
+
+    def test_calculate_win_rate_zero_stake_not_a_bet(self):
+        """Test stake 0 with bet_on set is not counted as a placed bet."""
+        data = pd.DataFrame({
+            'bt_stake': [0, 100],
+            'bt_bet_on': [0, 1],
+            'bt_win': [None, True],
+        })
+        assert calculate_win_rate(data) == 1.0
+
+    def test_calculate_win_rate_skipped_outcome_not_a_bet(self):
+        """Test a positive stake with bet_on -1 is not a placed bet."""
+        data = pd.DataFrame({
+            'bt_stake': [100, 100],
+            'bt_bet_on': [-1, 1],
+            'bt_win': [None, True],
+        })
+        assert calculate_win_rate(data) == 1.0
 
 class TestCalculateAverageOdds:
     def test_calculate_average_odds(self, sample_data):
@@ -103,47 +171,81 @@ class TestCalculateAverageStake:
 
 class TestCalculateSortinoRatio:
     def test_calculate_sortino_ratio(self):
-        """Test Sortino ratio with varying negative returns"""
+        """Test Sortino uses downside deviation of all periods including zeros."""
         data = pd.DataFrame({
-            'bt_date_column': pd.date_range(start='2023-01-01', periods=11),
-            'bt_starting_bankroll': [1000] * 11,
-            'bt_profit': [0, 100, -30, 150, -60, 150, -40, 150, -70, 150, 0],  # Varying negative returns
-            'bt_stake': [100] * 10 + [0],
-            'bt_bet_on': [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, -1]
+            'bt_date_column': pd.to_datetime(
+                ['2023-01-01', '2023-01-02', '2023-01-03']
+            ),
+            'bt_starting_bankroll': [1000, 1000, 1000],
+            'bt_profit': [100, -50, 200],
         })
-        result = calculate_sortino_ratio(data)
-        assert result > 0, f"Expected positive Sortino ratio, got {result}"
-    
-    def test_sortino_ratio_constant_negative_returns(self):
-        """Test Sortino ratio when all negative returns are the same"""
-        data = pd.DataFrame({
-            'bt_date_column': pd.date_range(start='2023-01-01', periods=11),
-            'bt_starting_bankroll': [1000] * 11,
-            'bt_profit': [0, 100, -50, 150, -50, 150, -50, 150, -50, 150, 0],  # All negative returns same
-            'bt_stake': [100] * 10 + [0],
-            'bt_bet_on': [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, -1]
-        })
-        result = calculate_sortino_ratio(data)
-        # Should return a positive value - even with constant negative returns, 
-        # downside deviation is calculable using the correct method
-        assert result > 0, f"Expected positive Sortino ratio, got {result}"
-    
+        # r = [0.10, -0.05, 0.20]; shortfalls = [0, -0.05, 0]
+        expected = 45.8257569495584
+        assert calculate_sortino_ratio(data) == pytest.approx(expected)
+
     def test_sortino_ratio_no_negative_returns(self):
-        """Test Sortino ratio when there are no negative returns (zero downside deviation)"""
+        """Test Sortino is inf when there is no downside and mean excess > 0."""
         data = pd.DataFrame({
             'bt_date_column': pd.date_range(start='2023-01-01', periods=5),
             'bt_starting_bankroll': [1000] * 5,
-            'bt_profit': [100, 200, 50, 150, 100],  # All positive
+            'bt_profit': [100, 200, 50, 150, 100],
             'bt_stake': [100] * 5,
-            'bt_bet_on': [1] * 5
+            'bt_bet_on': [1] * 5,
         })
-        result = calculate_sortino_ratio(data)
-        # Should return inf when there are no negative returns and positive mean return
-        assert result == float('inf'), f"Expected inf for no negative returns, got {result}"
+        assert calculate_sortino_ratio(data) == float('inf')
+
+    def test_sortino_zero_when_flat_returns(self):
+        """Test Sortino is 0 when there is no downside and mean excess is 0."""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(
+                ['2023-01-01', '2023-01-02', '2023-01-03']
+            ),
+            'bt_starting_bankroll': [1000, 1000, 1000],
+            'bt_profit': [0, 0, 0],
+        })
+        assert calculate_sortino_ratio(data) == 0.0
+
 
 class TestCalculateCalmarRatio:
-    def test_calculate_calmar_ratio(self, sample_data):
-        assert calculate_calmar_ratio(sample_data) > 0
+    def test_calculate_calmar_ratio(self):
+        """Test Calmar = geometric annual return / |return-curve max DD|."""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2023-01-01', '2024-01-01']),
+            'bt_profit': [100, -55],
+            'bt_starting_bankroll': [1000, 1100],
+            'bt_ending_bankroll': [1100, 1045],
+        })
+        years = 365 / 365.25
+        r_annual = 1.045 ** (1 / years) - 1
+        expected = r_annual / 0.05
+        assert calculate_calmar_ratio(data) == pytest.approx(expected)
+
+    def test_calmar_inf_when_no_drawdown_and_positive_return(self):
+        """Test Calmar is inf when the return curve never draws down."""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2023-01-01', '2024-01-01']),
+            'bt_profit': [100, 100],
+            'bt_starting_bankroll': [1000, 1100],
+            'bt_ending_bankroll': [1100, 1200],
+        })
+        assert calculate_calmar_ratio(data) == float('inf')
+
+    def test_calmar_compounds_same_day_returns(self):
+        """Test same-day bets compound; sum would understate the drawdown."""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(
+                ['2023-01-01', '2023-01-01', '2024-01-01']
+            ),
+            'bt_profit': [100, -200, 300],
+            'bt_starting_bankroll': [1000, 1000, 1000],
+            'bt_ending_bankroll': [1100, 900, 1200],
+        })
+        # Compounded day-1 return: 1.10*0.80-1 = -0.12 (sum would be -0.10)
+        # cumprod: 0.88, 0.88*1.30 = 1.144; max DD = 0.12
+        years = 365 / 365.25
+        r_annual = 1.144 ** (1 / years) - 1
+        expected = r_annual / 0.12
+        assert calculate_calmar_ratio(data) == pytest.approx(expected)
 
 class TestCalculateDrawdowns:
     def test_calculate_drawdowns(self, sample_data):
@@ -171,6 +273,16 @@ class TestCalculateDrawdowns:
         assert max_dd == pytest.approx(0.25, rel=1e-6)
         assert max_dur == 3
 
+    def test_max_drawdown_matches_drawdowns_magnitude(self):
+        """Test signed max drawdown is the negative of drawdowns magnitude."""
+        data = pd.DataFrame({
+            'bt_ending_bankroll': [1000, 850, 1100],
+        })
+        magnitude, duration = calculate_drawdowns(data)
+        assert calculate_max_drawdown(data) == pytest.approx(-magnitude)
+        assert magnitude == pytest.approx(0.15)
+        assert duration == 2
+
 class TestCalculateBestWorstBets:
     def test_calculate_best_worst_bets(self, sample_data):
         best, worst = calculate_best_worst_bets(sample_data)
@@ -192,6 +304,9 @@ class TestCalculateAllMetrics:
         assert metrics['Total Profit [$]'] == 500
         assert metrics['Win Rate [%]'] == 50.0
         assert metrics['Total Bets'] == 10
+        assert 'Risk-Adjusted Annual ROI [-]' in metrics
+        assert 'CAGR [%]' in metrics
+        assert metrics['Max Drawdown [%]'] == pytest.approx(4.54545, rel=1e-5)
 
 class TestCalculateAverageROIPerBet:
     def test_consistent_profits_micro(self):
@@ -229,6 +344,15 @@ class TestCalculateAverageROIPerBet:
             'bt_bet_on': [-1, -1, -1]
         })
         assert calculate_avg_roi_per_bet_micro(data) == 0.0
+
+    def test_zero_stake_row_not_included_in_micro_roi(self):
+        """Test a zero-stake row is not treated as a bet in micro ROI."""
+        data = pd.DataFrame({
+            'bt_stake': [0, 100],
+            'bt_profit': [0, 20],
+            'bt_bet_on': [0, 1],
+        })
+        assert calculate_avg_roi_per_bet_micro(data) == 20.0
 
     def test_consistent_profits_macro(self):
         """Test case with consistent profits for macro-averaging"""
@@ -442,6 +566,16 @@ class TestCalculateRiskAdjustedAnnualROI:
         # Risk-adjusted = inf (no drawdown)
         assert calculate_risk_adjusted_annual_roi(data) == float('inf')
 
+    def test_zero_drawdown_and_zero_roi_returns_zero(self):
+        """Test risk-adjusted ROI is 0 when there is no drawdown and no return."""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2021-01-01', '2021-12-31']),
+            'bt_starting_bankroll': [1000, 1000],
+            'bt_ending_bankroll': [1000, 1000],
+            'bt_bet_on': [1, 1],
+        })
+        assert calculate_risk_adjusted_annual_roi(data) == 0.0
+
     def test_negative_roi_with_drawdown(self):
         """Test case with negative ROI and drawdown to ensure consistent sign"""
         data = pd.DataFrame({
@@ -557,6 +691,15 @@ class TestCalculateCAGR:
             'bt_date_column': pd.to_datetime(['2023-01-01', '2024-01-01']),
             'bt_starting_bankroll': [0, 0],
             'bt_ending_bankroll': [0, 1000]
+        })
+        assert calculate_cagr(data) == 0.0
+
+    def test_negative_final_value(self):
+        """Test CAGR is 0 when final bankroll is negative."""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(['2023-01-01', '2024-01-01']),
+            'bt_starting_bankroll': [1000, 1000],
+            'bt_ending_bankroll': [1000, -10],
         })
         assert calculate_cagr(data) == 0.0
 

@@ -5,3 +5,4 @@ dist/*
 .vscode/settings.json
 .cursor/commands/test-quality-auditor.md
 uv.lock
+temp_notebook.json

@@ -19,15 +19,12 @@ The `metrics` module currently only contains the `sport_metrics.py` file, which 
 - Bankroll Final: The final value of your bankroll at the end of the backtest period. (Currency)
 - Bankroll Peak: The highest value your bankroll reached during the backtest period. (Currency)
 - Bankroll Valley: The lowest value your bankroll reached during the backtest period. (Currency)
-- Sharpe Ratio: Measures the risk-adjusted return of the betting strategy. (Ratio)
-- Sortino Ratio: Similar to Sharpe Ratio, but only considers downside risk (negative returns). (Ratio)
-- Calmar Ratio: Measures the risk-adjusted return relative to maximum drawdown. (Ratio)
-- Max Drawdown: The largest peak-to-trough decline in the bankroll. (Percentage)
-- Average Drawdown: The average of all drawdowns during the backtest period. (Percentage)
-- Max Drawdown Duration: The longest period (in number of bets) that the bankroll was in a drawdown state. (Number of bets)
-- Average Drawdown Duration: The average duration of all drawdowns during the backtest period. (Number of bets)
-- Median Drawdown Duration: The median duration of all drawdowns during the backtest period. (Number of bets)
-- Win Rate: The percentage of bets that resulted in a profit. (Percentage)
+- Sharpe Ratio: Annualized mean of compounded period returns over sample std (`ddof=1`); risk-free rate is 0. Default scale is 252 periods/year. (Ratio)
+- Sortino Ratio: Same period returns, but volatility is downside deviation below target 0 (zeros included for upside periods). `inf` if no downside and positive mean excess. (Ratio)
+- Calmar Ratio: Geometric annual return / |max drawdown on the compounded return curve|. Not the same drawdown as Max Drawdown. (Ratio)
+- Max Drawdown: Largest peak-to-trough decline on the bankroll, reported as a positive percent. Duration is last peak to trough in placed bets. (Percentage)
+- Max Drawdown Duration: Inclusive bet count from the last peak before the trough to the trough. (Number of bets)
+- Win Rate: Winning placed bets / placed bets. A placed bet has `bt_stake > 0` and `bt_bet_on != -1`. (Percentage)
 - Average Odds: The average odds of all bets placed. (Decimal odds)
 - Highest Winning Odds: The highest odds of a winning bet. (Decimal odds)
 - Highest Losing Odds: The highest odds of a losing bet. (Decimal odds)
@@ -44,7 +41,7 @@ The `metrics` module currently only contains the `sport_metrics.py` file, which 
 The `strategies` module currently only contains the `sport_strategies.py` file, which provides functionality for defining betting strategies and any specific strategies you implement.
 
 - `BaseStrategy`: The base class for all strategies.
-- `FixedStake`: A strategy that bets a fixed amount per bet.
+- `FixedStake`: A strategy that bets a fixed dollar amount, or a fixed percentage of the **current** bankroll (`stake < 1`).
 - `KellyCriterion`: A strategy that bets a fraction of the bankroll based on the Kelly Criterion.
 
 ## Sport Plots

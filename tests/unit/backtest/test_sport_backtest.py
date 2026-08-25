@@ -344,7 +344,10 @@ class TestPredictionBacktest:
             'Max Drawdown [%]', 'Max. Drawdown Duration [bets]',
             'Win Rate [%]', 'Average Odds [-]', 'Highest Winning Odds [-]', 'Highest Losing Odds [-]',
             'Average Stake [$]', 'Best Bet [$]', 'Worst Bet [$]',
-            'Total Bets', 'Total Opportunities', 'Bet Frequency [%]'
+            'Total Bets', 'Total Opportunities', 'Bet Frequency [%]',
+            'CAGR [%]', 'Risk-Adjusted Annual ROI [-]',
+            'Avg. ROI per Bet [%] (micro)', 'Avg. ROI per Bet [%] (macro)',
+            'Avg. ROI per Year [%] (micro)', 'Avg. ROI per Year [%] (macro)',
         ]
         for metric in expected_metrics:
             assert metric in metrics, f"Expected metric '{metric}' not found in calculated metrics"

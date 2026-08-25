@@ -1,4 +1,6 @@
-.venv/*
+.venv/
+.venv_/
+venv/
 *.pyc
 */*.egg-info/*
 dist/*

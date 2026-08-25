@@ -5,9 +5,9 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="backtestbuddy",
-    version="0.1.12",
+    version="0.1.13",
     author="Sebastian Pachl",
-    description="A flexible backtesting framework for trading and betting strategies",
+    description="Sports-betting backtesting with bankroll simulation and risk metrics",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/Pacman1984/backtestbuddy",
@@ -43,6 +43,7 @@ setup(
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
         "Development Status :: 4 - Beta",

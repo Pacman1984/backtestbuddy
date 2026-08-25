@@ -1,31 +1,31 @@
-# BacktestBuddy Documentation
+# BacktestBuddy
 
-Welcome to the official documentation for BacktestBuddy!
+Open-source Python package for **sports-betting backtests**: sequential bankroll simulation, Fixed Stake and Kelly sizing, and risk metrics (ROI, CAGR, Sharpe, Sortino, Calmar, drawdown).
 
-BacktestBuddy is an open-source Python package for backtesting various trading and betting strategies, including:
+**Requires Python >= 3.9.** License: MIT.
 
-- Sports betting (✅ Done)
-- Stocks trading (🏗️ In progress)
-- Cryptocurrencies trading (🔮 Planned)
+Stock and crypto backtests are planned; sports betting is the supported surface today.
 
 ## Features
 
-- Flexible backtesting framework for different types of strategies
-- Support for sports betting, stock trading, and cryptocurrency trading
-- Easy-to-use API for implementing custom strategies
-- Comprehensive performance metrics and visualization tools
+- `PredictionBacktest` and `ModelBacktest` with walk-forward CV
+- Fixed-stake and Kelly Criterion strategies
+- Performance metrics aligned to documented formulas
+- Plotly bankroll, ROI, and odds-distribution charts
 
-## Table of Contents
+## Documentation
 
-- [Getting Started](docs/getting-started.md)
-- [Core Concepts](docs/core-concepts.md)
-- [Backtest Module](docs/backtest-module.md)
-- [Metrics Module](docs/metrics-module.md)
-- [Strategies Module](docs/strategies-module.md)
-- [Plots Module](docs/plots-module.md)
-- [Examples](docs/examples.md)
+Full docs live in the [GitHub repository](https://github.com/Pacman1984/backtestbuddy):
 
-> **📚 Full Documentation**: For the complete documentation with examples and detailed API reference, see the [GitHub repository](https://github.com/Pacman1984/backtestbuddy) or build it locally using `mkdocs serve` after installing dependencies with `pip install backtestbuddy[docs]`.
+- [Getting Started](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/getting-started.md)
+- [Core Concepts](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/core-concepts.md)
+- [Backtest Module](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/backtest-module.md)
+- [Metrics Module](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/metrics-module.md)
+- [Strategies Module](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/strategies-module.md)
+- [Plots Module](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/plots-module.md)
+- [Examples](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/examples.md)
+
+Local docs: `pip install backtestbuddy[docs]` then `mkdocs serve`.
 
 ## Installation
 
@@ -88,6 +88,23 @@ backtest.plot_odds_distribution()
 ```
 
 ## Changelog
+
+### Version 0.1.13 (2026-08-26)
+
+**⚠️ Breaking Changes:**
+- **Sharpe / Sortino / Calmar**: Period returns compound with `prod(1+r)-1` instead of summing simple returns; empty calendar days are no longer filled with zeros. Numeric values change vs 0.1.12.
+- **Placed bets**: Metrics count a bet only when `bt_stake > 0` and `bt_bet_on != -1`.
+- **Calmar / Risk-Adjusted Annual ROI**: Return `inf` when there is no drawdown and return is positive; `0` when return is also 0.
+- **FixedStake.get_bet_details**: Uses `select_bet` (model probabilities override a class prediction). Unused `initial_bankroll` attribute removed.
+
+**Improvements:**
+- Bankroll max drawdown uses the last peak before the trough; plot overlay matches that window.
+- Kelly fraction is 0 when decimal odds are `<= 1` (no division by zero).
+- PyPI metadata: SPDX `MIT` license, Python 3.13 classifier, tighter project description.
+
+**Testing / docs:**
+- Independent numeric tests for Sharpe, Sortino, Calmar, same-day compounding, and the bet filter.
+- Metrics and strategies docs rewritten to match the implementations.
 
 ### Version 0.1.12 (2025-11-07)
 

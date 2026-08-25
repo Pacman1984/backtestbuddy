@@ -1,4 +1,4 @@
-__version__ = "0.1.12"
+__version__ = "0.1.13"
 
 from .backtest.sport_backtest import BaseBacktest, ModelBacktest, PredictionBacktest
 from .strategies.sport_strategies import BaseStrategy, FixedStake, KellyCriterion

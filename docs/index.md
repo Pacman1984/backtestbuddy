@@ -60,7 +60,7 @@ backtest = PredictionBacktest(
     prediction_column='model_predictions',
     initial_bankroll=1000,
     strategy=strategy,
-    model_prob_columns=['prob_team_a', 'prob_team_b'] # Needed for PredictionBacktest in combination with Kelly Strategy. Not needed for ModelBacktest in combination with Kelly Strategy, because the model probabiliies will be calculated by the model or if the Strategy does not require model probabilities, like Fixed Stake.
+    model_prob_columns=['prob_team_a', 'prob_team_b'] # Needed for Kelly and ValueBet. Not needed for FixedStake or UnitStake.
 )
 
 # Run the backtest

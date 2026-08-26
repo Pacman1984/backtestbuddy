@@ -49,6 +49,9 @@ The `strategies` module currently only contains the `sport_strategies.py` file, 
 - `BaseStrategy`: The base class for all strategies.
 - `FixedStake`: A strategy that bets a fixed dollar amount, or a fixed percentage of the **current** bankroll (`stake < 1`).
 - `KellyCriterion`: A strategy that bets a fraction of the bankroll based on the Kelly Criterion.
+- `ValueBet`: Bets only when `p * odds - 1` exceeds `min_ev`; picks the highest EV. Requires model probabilities.
+- `UnitStake`: Unit-loss, unit-win, or unit-impact staking (Cortés 2020). `unit` is always a dollar amount.
+- `OddsFilter`: Restricts an inner strategy to an inclusive odds band (`min_odds` / `max_odds`).
 
 ## Sport Plots
 

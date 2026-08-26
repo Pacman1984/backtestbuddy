@@ -262,9 +262,9 @@ class BaseBacktest(ABC):
         Simulate a bet using the bookie strategy (lowest-odds favorite).
 
         Stake sizing reuses ``self.strategy.calculate_stake`` without model
-        probabilities. KellyCriterion therefore always stakes 0 here; the
-        bookie path is only a valid benchmark with strategies that do not
-        require model probabilities (e.g. FixedStake).
+        probabilities. KellyCriterion and ValueBet therefore always stake 0
+        here; the bookie path is only a valid benchmark with strategies that
+        do not require model probabilities (e.g. FixedStake, UnitStake).
 
         Args:
             fold: Current fold number.

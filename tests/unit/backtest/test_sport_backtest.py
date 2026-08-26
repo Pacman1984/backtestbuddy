@@ -10,7 +10,11 @@ import pandas as pd
 import numpy as np
 from sklearn.dummy import DummyClassifier
 from backtestbuddy.backtest.sport_backtest import BaseBacktest, ModelBacktest, PredictionBacktest
-from backtestbuddy.strategies.sport_strategies import FixedStake, KellyCriterion
+from backtestbuddy.strategies.sport_strategies import (
+    FixedStake,
+    KellyCriterion,
+    ValueBet,
+)
 
 
 class TestModelBacktest:
@@ -425,4 +429,47 @@ class TestPredictionBacktest:
         )
         with pytest.raises(ValueError):
             backtest.plot()
+
+    def test_valuebet_requires_model_prob_columns(self, sample_data):
+        """ValueBet must receive model_prob_columns on PredictionBacktest."""
+        with pytest.raises(ValueError, match="model probabilities"):
+            PredictionBacktest(
+                data=sample_data,
+                odds_columns=['odds_1', 'odds_2'],
+                outcome_column='outcome',
+                date_column='date',
+                prediction_column='prediction',
+                strategy=ValueBet(stake=25),
+            )
+
+    def test_valuebet_skips_nonpositive_ev_and_places_positive_ev(self):
+        """ValueBet skips a 0-EV row and stakes on a later +EV row."""
+        data = pd.DataFrame({
+            'date': pd.date_range(start='2023-01-01', periods=2),
+            'odds_1': [2.0, 2.0],
+            'odds_2': [2.0, 2.0],
+            'outcome': [0, 0],
+            'prediction': [0, 0],
+            'prob_1': [0.4, 0.6],
+            'prob_2': [0.4, 0.4],
+        })
+        backtest = PredictionBacktest(
+            data=data,
+            odds_columns=['odds_1', 'odds_2'],
+            outcome_column='outcome',
+            date_column='date',
+            prediction_column='prediction',
+            initial_bankroll=1000,
+            strategy=ValueBet(min_ev=0.0, stake=25),
+            model_prob_columns=['prob_1', 'prob_2'],
+        )
+        backtest.run()
+        placed = backtest.detailed_results
+        assert len(placed) == 2
+        assert placed['bt_stake'].iloc[0] == 0.0
+        assert placed['bt_bet_on'].iloc[0] == -1
+        assert placed['bt_stake'].iloc[1] == 25
+        assert placed['bt_bet_on'].iloc[1] == 0
+        assert placed['bt_model_prob_0'].iloc[1] == pytest.approx(0.6)
+
 

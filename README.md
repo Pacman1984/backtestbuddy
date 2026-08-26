@@ -1,6 +1,6 @@
 # BacktestBuddy
 
-Open-source Python package for **sports-betting backtests**: sequential bankroll simulation, Fixed Stake and Kelly sizing, and risk metrics (ROI, CAGR, Sharpe, Sortino, Calmar, drawdown).
+Open-source Python package for **sports-betting backtests**: sequential bankroll simulation, Fixed Stake, Kelly, ValueBet, unit staking, odds-band filters, and risk metrics (ROI, CAGR, Sharpe, Sortino, Calmar, drawdown).
 
 **Requires Python >= 3.9.** License: MIT.
 
@@ -9,7 +9,7 @@ Stock and crypto backtests are planned; sports betting is the supported surface 
 ## Features
 
 - `PredictionBacktest` and `ModelBacktest` with walk-forward CV
-- Fixed-stake and Kelly Criterion strategies
+- Fixed-stake, Kelly, ValueBet, unit staking, and odds-band strategies
 - Performance metrics aligned to documented formulas
 - Plotly bankroll, ROI, and odds-distribution charts
 

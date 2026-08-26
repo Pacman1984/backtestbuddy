@@ -71,6 +71,54 @@ Calculates the Kelly fraction for a given odds and probability.
 
 Returns a tuple containing the stake, the index of the outcome to bet on, and a dictionary of additional information. The additional information includes the Kelly fractions for each possible outcome, stored as `kelly_fraction_0`, `kelly_fraction_1`, etc.
 
+#### ValueBet
+
+The `ValueBet` class bets only when expected value exceeds `min_ev`. EV of an outcome is `p * odds - 1`. Among outcomes with EV strictly greater than `min_ev`, the highest EV is selected (not the highest probability). Stake follows FixedStake rules.
+
+Requires model probabilities. Bookie simulations call `calculate_stake` without probabilities, so ValueBet always stakes 0 on the bookie path.
+
+##### Attributes (ValueBet)
+
+- `min_ev` (float): Minimum expected value to place a bet (default 0). Outcomes with EV at or below this skip.
+- `stake` (float): Absolute amount (>= 1) or current-bankroll fraction (< 1).
+- `requires_probabilities` (bool): Always `True`. `PredictionBacktest` will raise if `model_prob_columns` is omitted.
+
+##### Methods (ValueBet)
+
+Implements all methods from `BaseStrategy`. `get_bet_details` extra info includes `ev_0`, `ev_1`, … for each outcome.
+
+#### UnitStake
+
+The `UnitStake` class implements Cortés (2020) unit plans. Selection matches FixedStake (max model probability, else prediction, else lowest-odds favorite). The `unit` is always a currency amount, never a bankroll fraction.
+
+Plans:
+
+- `loss`: stake = unit (flat risk if the bet loses).
+- `win`: stake = unit / (odds − 1) so the net win equals unit. Odds `<= 1` skip.
+- `impact`: stake = unit / odds so the difference between winning and losing is unit. Odds `<= 0` skip.
+
+All three plans cap the stake at the current bankroll. Bookie path works (favorite + unit size).
+
+##### Attributes (UnitStake)
+
+- `unit` (float): Staking constant in currency units (must be positive).
+- `plan` (str): `loss`, `win`, or `impact`.
+
+#### OddsFilter
+
+The `OddsFilter` class restricts an inner strategy to outcomes with `min_odds <= odds <= max_odds`. Default inner strategy is `FixedStake(stake)`. If no outcome is in the band, the bet is skipped (`bet_on = -1`, stake 0).
+
+This is “only consider in-band outcomes”, not “place the inner pick then skip if it is out of band”. Wrapping `FixedStake` without probabilities therefore bets the in-band favorite, not the overall favorite.
+
+`requires_probabilities` is true when the inner strategy requires probabilities (for example `ValueBet`).
+
+##### Attributes (OddsFilter)
+
+- `min_odds` (float): Inclusive lower bound (default 1.01).
+- `max_odds` (float): Inclusive upper bound (default infinity).
+- `inner` (`BaseStrategy`): Wrapped strategy.
+- `stake` (float): Used only when `inner` is omitted.
+
 ## Utility Functions
 
 ### `get_default_strategy`

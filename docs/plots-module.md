@@ -36,6 +36,8 @@ This function generates a multi-panel plot with three subplots:
 3. **Stake Percentage**: Shows the stake percentage (stake/bankroll) for each bet as a bar chart
    - Helps visualize bet sizing over time
 
+4. **Metrics table**: All values from `calculate_all_metrics` in a right-hand Metric/Value table aligned with the three panels. Non-finite values (NaN, inf) show as "—".
+
 **Parameters:**
 
 - `backtest` (Any): An instance of a Backtest class (e.g., `ModelBacktest` or `PredictionBacktest`) containing the results. The backtest must have been run (i.e., `backtest.run()` must have been called) and must have a `detailed_results` attribute populated.
@@ -47,7 +49,7 @@ This function generates a multi-panel plot with three subplots:
 **Features:**
 
 - Only includes bets that were actually placed (filters out non-bets)
-- Displays all calculated metrics as annotations on the right side of the plot
+- Displays all calculated metrics in a table on the right of the plot
 - Interactive hover tooltips with detailed bet information
 - Max Drawdown visualization with annotation showing percentage and duration
 

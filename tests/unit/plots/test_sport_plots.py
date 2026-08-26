@@ -12,7 +12,12 @@ from sklearn.dummy import DummyClassifier
 
 from backtestbuddy.backtest.sport_backtest import ModelBacktest, PredictionBacktest
 from backtestbuddy.strategies.sport_strategies import FixedStake
-from backtestbuddy.plots.sport_plots import plot_backtest, plot_odds_histogram
+from backtestbuddy.plots.sport_plots import (
+    _format_metric_value,
+    _metric_table_cells,
+    plot_backtest,
+    plot_odds_histogram,
+)
 
 
 class TestPlotBacktest:
@@ -66,6 +71,46 @@ class TestPlotBacktest:
         assert fig.layout is not None
         # Should have multiple y-axes for subplots
         assert hasattr(fig.layout, 'yaxis')
+
+    def test_plot_backtest_puts_metrics_in_a_table(
+        self, simple_backtest_result
+    ):
+        """Metrics sit in a table, not paper annotations on the charts."""
+        fig = plot_backtest(simple_backtest_result)
+        tables = [trace for trace in fig.data if trace.type == "table"]
+        assert len(tables) == 1
+        assert list(tables[0].header.values) == ["Metric", "Value"]
+        names = list(tables[0].cells.values[0])
+        values = list(tables[0].cells.values[1])
+        assert len(tables[0].cells.values) == 2
+        assert len(names) == len(values)
+        assert "" not in names
+        assert "Yield [%]" in names
+        assert "Total Bets" in names
+        assert list(tables[0].header.align) == ["right", "left"]
+        assert list(tables[0].cells.align) == ["right", "left"]
+        metric_annotations = [
+            ann
+            for ann in (fig.layout.annotations or [])
+            if getattr(ann, "text", "") and "Yield [%]:" in str(ann.text)
+        ]
+        assert metric_annotations == []
+
+    def test_plot_backtest_x_axis_title_only_on_bottom(
+        self, simple_backtest_result
+    ):
+        """Only the lowest panel is labeled Bet Number."""
+        fig = plot_backtest(simple_backtest_result)
+        assert not (fig.layout.xaxis.title.text or "")
+        assert not (fig.layout.xaxis2.title.text or "")
+        assert fig.layout.xaxis3.title.text == "Bet Number"
+
+    def test_plot_backtest_legend_is_horizontal(
+        self, simple_backtest_result
+    ):
+        """Legend sits above the charts so it cannot cover the table."""
+        fig = plot_backtest(simple_backtest_result)
+        assert fig.layout.legend.orientation == "h"
     
     def test_plot_backtest_with_no_bets_placed(self):
         """Test plot_backtest behavior when no bets are placed."""
@@ -190,4 +235,42 @@ class TestPlotIntegration:
         
         assert isinstance(fig1, go.Figure)
         assert isinstance(fig2, go.Figure)
+
+
+class TestFormatMetricValue:
+    """Unit tests for side-table value formatting."""
+
+    def test_non_finite_floats_become_em_dash(self):
+        """NaN and inf are shown as an em dash, not the string nan."""
+        assert _format_metric_value(float("nan")) == "—"
+        assert _format_metric_value(float("inf")) == "—"
+        assert _format_metric_value(float("-inf")) == "—"
+
+    def test_finite_float_uses_two_decimals(self):
+        """Finite floats are rounded to two decimal places."""
+        assert _format_metric_value(12.345) == "12.35"
+        assert _format_metric_value(4.0) == "4.00"
+
+    def test_integers_have_no_decimals(self):
+        """Counts stay as whole numbers."""
+        assert _format_metric_value(5) == "5"
+        assert _format_metric_value(np.int64(12)) == "12"
+
+    def test_timestamps_and_durations_drop_midnight(self):
+        """Dates show YYYY-MM-DD; whole-day durations drop 00:00:00."""
+        ts = pd.Timestamp("2023-01-01 00:00:00")
+        assert _format_metric_value(ts) == "2023-01-01"
+        assert _format_metric_value(pd.Timedelta(days=9)) == "9 days"
+
+
+class TestMetricTableCells:
+    """Unit tests for the single Metric/Value column layout."""
+
+    def test_keeps_all_metrics_in_one_column_pair(self):
+        """Odd-length maps stay one pair; they are not split or padded."""
+        metrics = {"A": 1, "B": 2.5, "C": float("nan")}
+        names, values = _metric_table_cells(metrics)
+        assert names == ["A", "B", "C"]
+        assert values == ["1", "2.50", "—"]
+
 

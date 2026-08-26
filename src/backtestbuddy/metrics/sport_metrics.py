@@ -7,19 +7,25 @@ without inserting empty calendar days.
 
 A bet is counted only when ``bt_stake > 0`` and ``bt_bet_on != -1``.
 
+Yield is ``sum(profit) / sum(stake)``. Expected P&L, Brier, log-loss,
+and ECE use the model probability of the selected outcome. Implied
+probability is ``1 / odds``; overround is ``sum_k 1/odds_k - 1``.
+
 Sharpe and Sortino annualize with ``output_period`` periods per year.
 The sports default is ``365.25`` (calendar). ``252`` is the equity
 trading-year convention used through 0.1.13. Observed periods/year uses
 the sample density of non-empty return buckets.
 """
 
-from typing import Any, Dict, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 TRADING_DAYS_PER_YEAR = 252.0
 CALENDAR_DAYS_PER_YEAR = 365.25
+LOG_LOSS_CLIP = 1e-15
+ECE_BINS = 10
 
 
 class DrawdownWindow(NamedTuple):
@@ -57,6 +63,78 @@ def _filter_placed_bets(detailed_results: pd.DataFrame) -> pd.DataFrame:
         (detailed_results["bt_stake"] > 0)
         & (detailed_results["bt_bet_on"] != -1)
     ]
+
+
+def _outcome_odd_columns(detailed_results: pd.DataFrame) -> List[str]:
+    """Return ``bt_odd_{i}`` columns sorted by outcome index.
+
+    Args:
+        detailed_results: Backtest result rows.
+
+    Returns:
+        Column names such as ``bt_odd_0``, ``bt_odd_1``.
+    """
+    cols = [
+        c
+        for c in detailed_results.columns
+        if c.startswith("bt_odd_") and c[len("bt_odd_") :].isdigit()
+    ]
+
+    def _index(name: str) -> int:
+        return int(name[len("bt_odd_") :])
+
+    return sorted(cols, key=_index)
+
+
+def _selected_model_probability(bet_placed: pd.DataFrame) -> pd.Series:
+    """Model probability of the outcome that was bet on.
+
+    Args:
+        bet_placed: Placed-bet rows.
+
+    Returns:
+        Series aligned to ``bet_placed``; NaN when ``bt_model_prob_{k}``
+        is missing.
+    """
+    if bet_placed.empty:
+        return pd.Series(dtype=float)
+    bet_on = bet_placed["bt_bet_on"].to_numpy()
+    values = np.full(len(bet_placed), np.nan, dtype=float)
+    for outcome in pd.unique(bet_on):
+        if pd.isna(outcome) or int(outcome) < 0:
+            continue
+        outcome_i = int(outcome)
+        col = f"bt_model_prob_{outcome_i}"
+        if col not in bet_placed.columns:
+            continue
+        mask = bet_on == outcome
+        values[mask] = pd.to_numeric(
+            bet_placed.loc[mask, col], errors="coerce"
+        ).to_numpy()
+    return pd.Series(values, index=bet_placed.index)
+
+
+def _placed_probability_frame(detailed_results: pd.DataFrame) -> pd.DataFrame:
+    """Placed bets that have a selected-outcome model probability.
+
+    Returns:
+        Frame with ``stake``, ``odds``, ``profit``, ``win``, ``p``. Empty
+        if no placed bets have model probabilities.
+    """
+    bets = _filter_placed_bets(detailed_results)
+    empty = pd.DataFrame(columns=["stake", "odds", "profit", "win", "p"])
+    if bets.empty:
+        return empty
+    frame = pd.DataFrame(
+        {
+            "stake": bets["bt_stake"].astype(float),
+            "odds": bets["bt_odds"].astype(float),
+            "profit": bets["bt_profit"].astype(float),
+            "win": (bets["bt_win"] == True).astype(float),
+            "p": _selected_model_probability(bets),
+        }
+    )
+    return frame.dropna(subset=["p", "odds", "stake"])
 
 
 def _compound_period_returns(
@@ -638,6 +716,257 @@ def calculate_cagr(detailed_results: pd.DataFrame) -> float:
     return cagr
 
 
+def calculate_yield(detailed_results: pd.DataFrame) -> float:
+    """Calculate yield: profit over total amount staked, as percent.
+
+    Distinct from bankroll ROI, which is relative to opening bankroll.
+    Distinct from micro ROI-per-bet, which equal-weights each bet.
+
+    Args:
+        detailed_results: Backtest result rows.
+
+    Returns:
+        ``sum(profit) / sum(stake) * 100`` on placed bets, or ``0.0``
+        if none were placed or total stake is 0.
+
+    Example:
+        Stakes 100 and 300, profits 20 and -30 → ``-10 / 400 * 100 = -2.5``.
+    """
+    bet_placed = _filter_placed_bets(detailed_results)
+    if bet_placed.empty:
+        return 0.0
+    total_stake = float(bet_placed["bt_stake"].sum())
+    if total_stake == 0:
+        return 0.0
+    return float(bet_placed["bt_profit"].sum() / total_stake * 100)
+
+
+def calculate_expected_profit(detailed_results: pd.DataFrame) -> float:
+    """Calculate expected profit from model p and decimal odds.
+
+    Per placed bet: ``stake * (p * odds - 1)``, using the model
+    probability of the selected outcome.
+
+    Args:
+        detailed_results: Backtest result rows with ``bt_model_prob_*``.
+
+    Returns:
+        Sum of expected profits, ``0.0`` if no placed bets, ``nan`` if
+        no selected-outcome model probabilities.
+
+    Example:
+        Stake 100, p=0.6, odds=2.0 → ``100 * (1.2 - 1) = 20``.
+    """
+    frame = _placed_probability_frame(detailed_results)
+    if _filter_placed_bets(detailed_results).empty:
+        return 0.0
+    if frame.empty:
+        return float("nan")
+    expected = frame["stake"] * (frame["p"] * frame["odds"] - 1.0)
+    return float(expected.sum())
+
+
+def calculate_expected_yield(detailed_results: pd.DataFrame) -> float:
+    """Calculate expected yield: expected profit over staked amount.
+
+    Args:
+        detailed_results: Backtest result rows with ``bt_model_prob_*``.
+
+    Returns:
+        Expected profit / stake on rows with model probabilities, as
+        percent. ``0.0`` if no placed bets, ``nan`` if no probabilities.
+
+    Example:
+        Expected profit 20 on stake 100 → ``20.0``.
+    """
+    frame = _placed_probability_frame(detailed_results)
+    if _filter_placed_bets(detailed_results).empty:
+        return 0.0
+    if frame.empty:
+        return float("nan")
+    total_stake = float(frame["stake"].sum())
+    if total_stake == 0:
+        return 0.0
+    expected = float(
+        (frame["stake"] * (frame["p"] * frame["odds"] - 1.0)).sum()
+    )
+    return expected / total_stake * 100
+
+
+def calculate_realized_vs_expected_profit(
+    detailed_results: pd.DataFrame,
+) -> float:
+    """Calculate realized profit minus expected profit on the same bets.
+
+    Args:
+        detailed_results: Backtest result rows with ``bt_model_prob_*``.
+
+    Returns:
+        ``sum(profit) - expected profit`` on rows with model
+        probabilities. ``0.0`` if no placed bets, ``nan`` if no
+        probabilities.
+
+    Example:
+        Expected 20, realized 100 → ``80``.
+    """
+    frame = _placed_probability_frame(detailed_results)
+    if _filter_placed_bets(detailed_results).empty:
+        return 0.0
+    if frame.empty:
+        return float("nan")
+    expected = float(
+        (frame["stake"] * (frame["p"] * frame["odds"] - 1.0)).sum()
+    )
+    return float(frame["profit"].sum() - expected)
+
+
+def calculate_average_implied_prob(detailed_results: pd.DataFrame) -> float:
+    """Calculate mean raw implied probability of the selected odds.
+
+    ``implied = 1 / decimal odds``. Vig is not stripped; see overround.
+
+    Args:
+        detailed_results: Backtest result rows.
+
+    Returns:
+        Mean of ``1 / bt_odds`` on placed bets, or ``nan`` if none.
+
+    Example:
+        Odds 2.0 and 4.0 → mean of 0.5 and 0.25 = ``0.375``.
+    """
+    bet_placed = _filter_placed_bets(detailed_results)
+    if bet_placed.empty:
+        return float("nan")
+    odds = pd.to_numeric(bet_placed["bt_odds"], errors="coerce")
+    implied = 1.0 / odds.where(odds > 0)
+    if implied.notna().sum() == 0:
+        return float("nan")
+    return float(implied.mean())
+
+
+def calculate_average_overround(detailed_results: pd.DataFrame) -> float:
+    """Calculate mean book overround across all outcome odds on a row.
+
+    Overround is ``sum_k 1/odds_k - 1``, reported as percent. Uses
+    ``bt_odd_*`` columns.
+
+    Args:
+        detailed_results: Backtest result rows.
+
+    Returns:
+        Mean overround in percent, or ``nan`` if no outcome-odd columns
+        or no placed bets.
+
+    Example:
+        Odds 2.0 and 1.8 → ``(0.5 + 1/1.8 - 1) * 100 ≈ 5.556``.
+    """
+    bet_placed = _filter_placed_bets(detailed_results)
+    if bet_placed.empty:
+        return float("nan")
+    odd_cols = _outcome_odd_columns(bet_placed)
+    if not odd_cols:
+        return float("nan")
+    implied_sum = None
+    for col in odd_cols:
+        odds = pd.to_numeric(bet_placed[col], errors="coerce")
+        inv = 1.0 / odds.where(odds > 0)
+        implied_sum = inv if implied_sum is None else implied_sum + inv
+    overround = implied_sum - 1.0
+    if overround.notna().sum() == 0:
+        return float("nan")
+    return float(overround.mean() * 100)
+
+
+def calculate_brier_score(detailed_results: pd.DataFrame) -> float:
+    """Calculate Brier score of the selected-outcome model probability.
+
+    ``mean((p - y)^2)`` with ``y=1`` on a win and ``0`` on a loss.
+
+    Args:
+        detailed_results: Backtest result rows with ``bt_model_prob_*``.
+
+    Returns:
+        Mean squared error of p vs outcome. ``nan`` if no probabilities;
+        ``0.0`` if no placed bets.
+
+    Example:
+        p=0.6 win → ``(0.6-1)^2 = 0.16``.
+    """
+    frame = _placed_probability_frame(detailed_results)
+    if _filter_placed_bets(detailed_results).empty:
+        return 0.0
+    if frame.empty:
+        return float("nan")
+    return float(((frame["p"] - frame["win"]) ** 2).mean())
+
+
+def calculate_log_loss(detailed_results: pd.DataFrame) -> float:
+    """Calculate binary log loss of the selected-outcome probability.
+
+    ``-mean(y log p + (1-y) log(1-p))``. ``p`` is clipped to
+    ``[1e-15, 1-1e-15]``.
+
+    Args:
+        detailed_results: Backtest result rows with ``bt_model_prob_*``.
+
+    Returns:
+        Mean log loss. ``nan`` if no probabilities; ``0.0`` if no
+        placed bets.
+
+    Example:
+        p=0.6 win → ``-log(0.6)``.
+    """
+    frame = _placed_probability_frame(detailed_results)
+    if _filter_placed_bets(detailed_results).empty:
+        return 0.0
+    if frame.empty:
+        return float("nan")
+    p = frame["p"].clip(LOG_LOSS_CLIP, 1.0 - LOG_LOSS_CLIP)
+    y = frame["win"]
+    return float((-(y * np.log(p) + (1.0 - y) * np.log(1.0 - p))).mean())
+
+
+def calculate_ece(
+    detailed_results: pd.DataFrame,
+    n_bins: int = ECE_BINS,
+) -> float:
+    """Calculate expected calibration error of selected-outcome p.
+
+    Equal-width bins on ``[0, 1]``. Empty bins are skipped.
+    ``ECE = sum_m (n_m / N) * |acc_m - conf_m|``.
+
+    Args:
+        detailed_results: Backtest result rows with ``bt_model_prob_*``.
+        n_bins: Number of equal-width probability bins.
+
+    Returns:
+        ECE in ``[0, 1]``. ``nan`` if no probabilities; ``0.0`` if no
+        placed bets.
+
+    Example:
+        All p=0.6 and half win → one occupied bin, ECE = ``|0.5-0.6|=0.1``.
+    """
+    frame = _placed_probability_frame(detailed_results)
+    if _filter_placed_bets(detailed_results).empty:
+        return 0.0
+    if frame.empty:
+        return float("nan")
+    bins = np.linspace(0.0, 1.0, n_bins + 1)
+    frame = frame.copy()
+    frame["bin"] = pd.cut(
+        frame["p"], bins=bins, include_lowest=True
+    )
+    n = len(frame)
+    ece = 0.0
+    for _, group in frame.groupby("bin", observed=True):
+        if group.empty:
+            continue
+        acc = float(group["win"].mean())
+        conf = float(group["p"].mean())
+        ece += (len(group) / n) * abs(acc - conf)
+    return float(ece)
+
+
 def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
     """Calculate the full metrics dictionary for a backtest.
 
@@ -648,6 +977,10 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
     Sharpe and Sortino are reported three times with the scale in the
     key: calendar ``365.25``, trading-year ``252``, and observed
     non-empty periods per year. There is no unnamed key.
+
+    Yield is profit over total staked. Expected profit / yield and
+    Brier / log-loss / ECE use the model probability of the selected
+    outcome when ``bt_model_prob_*`` is present.
 
     Args:
         detailed_results: Full backtest result rows.
@@ -683,6 +1016,8 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
         "Backtest End Date": end_date,
         "Backtest Duration": duration,
         "ROI [%]": calculate_roi(detailed_results) * 100,
+        "Yield [%]": calculate_yield(detailed_results),
+        "Expected Yield [%]": calculate_expected_yield(detailed_results),
         "Avg. ROI per Bet [%] (micro)": calculate_avg_roi_per_bet_micro(
             detailed_results
         ),
@@ -700,6 +1035,10 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
             detailed_results
         ),
         "Total Profit [$]": calculate_total_profit(detailed_results),
+        "Expected Profit [$]": calculate_expected_profit(detailed_results),
+        "Realized vs Expected Profit [$]": (
+            calculate_realized_vs_expected_profit(detailed_results)
+        ),
         "Bankroll Final [$]": bankroll_final,
         "Bankroll Peak [$]": bankroll_peak,
         "Bankroll Valley [$]": bankroll_valley,
@@ -724,6 +1063,15 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
         "Max. Drawdown Duration [bets]": max_drawdown_duration,
         "Win Rate [%]": calculate_win_rate(bet_placed) * 100,
         "Average Odds [-]": calculate_average_odds(bet_placed),
+        "Average Implied Prob [-]": calculate_average_implied_prob(
+            detailed_results
+        ),
+        "Average Overround [%]": calculate_average_overround(
+            detailed_results
+        ),
+        "Brier Score [-]": calculate_brier_score(detailed_results),
+        "Log Loss [-]": calculate_log_loss(detailed_results),
+        "ECE [-]": calculate_ece(detailed_results),
         "Highest Winning Odds [-]": highest_winning_odds,
         "Highest Losing Odds [-]": highest_losing_odds,
         "Average Stake [$]": calculate_average_stake(bet_placed),

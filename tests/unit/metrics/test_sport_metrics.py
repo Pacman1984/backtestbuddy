@@ -766,3 +766,163 @@ class TestCalculateCAGR:
         })
         assert calculate_cagr(data) == 0.0
 
+
+class TestCalculateYield:
+    def test_unequal_stakes_differ_from_micro_roi(self):
+        """Test yield is profit/staked, not the mean of per-bet ROI."""
+        data = pd.DataFrame({
+            'bt_stake': [100, 300],
+            'bt_profit': [20, -30],
+            'bt_bet_on': [0, 1],
+        })
+        assert calculate_yield(data) == pytest.approx(-2.5)
+        assert calculate_avg_roi_per_bet_micro(data) == pytest.approx(5.0)
+
+    def test_yield_ignores_no_bet_rows(self):
+        """Test skipped rows are excluded even if they have nonzero profit."""
+        data = pd.DataFrame({
+            'bt_stake': [0, 100],
+            'bt_profit': [999, 25],
+            'bt_bet_on': [-1, 0],
+        })
+        assert calculate_yield(data) == pytest.approx(25.0)
+
+    def test_yield_empty_is_zero(self):
+        """Test yield is 0 when no bets were placed."""
+        data = pd.DataFrame({
+            'bt_stake': [0],
+            'bt_profit': [0],
+            'bt_bet_on': [-1],
+        })
+        assert calculate_yield(data) == 0.0
+
+
+class TestExpectedValueMetrics:
+    def test_expected_profit_and_yield(self):
+        """Test EV is stake * (p * odds - 1) on the selected outcome."""
+        data = pd.DataFrame({
+            'bt_stake': [50],
+            'bt_odds': [2.0],
+            'bt_profit': [50],
+            'bt_win': [True],
+            'bt_bet_on': [0],
+            'bt_model_prob_0': [0.6],
+            'bt_model_prob_1': [0.4],
+        })
+        assert calculate_expected_profit(data) == pytest.approx(10.0)
+        assert calculate_expected_yield(data) == pytest.approx(20.0)
+        assert calculate_realized_vs_expected_profit(data) == pytest.approx(
+            40.0
+        )
+
+    def test_expected_profit_nan_without_model_probs(self):
+        """Test EV metrics are nan when model probabilities are missing."""
+        data = pd.DataFrame({
+            'bt_stake': [100],
+            'bt_odds': [2.0],
+            'bt_profit': [100],
+            'bt_win': [True],
+            'bt_bet_on': [0],
+        })
+        assert np.isnan(calculate_expected_profit(data))
+        assert np.isnan(calculate_expected_yield(data))
+        assert np.isnan(calculate_realized_vs_expected_profit(data))
+
+    def test_expected_uses_selected_outcome_prob(self):
+        """Test EV uses bt_model_prob of bt_bet_on, not the other outcome."""
+        data = pd.DataFrame({
+            'bt_stake': [100],
+            'bt_odds': [3.0],
+            'bt_profit': [-100],
+            'bt_win': [False],
+            'bt_bet_on': [1],
+            'bt_model_prob_0': [0.9],
+            'bt_model_prob_1': [0.4],
+        })
+        # stake * (0.4 * 3 - 1) = 20
+        assert calculate_expected_profit(data) == pytest.approx(20.0)
+
+
+class TestImpliedProbAndOverround:
+    def test_average_implied_prob(self):
+        """Test implied probability is mean of 1/odds on placed bets."""
+        data = pd.DataFrame({
+            'bt_stake': [100, 100],
+            'bt_odds': [2.0, 4.0],
+            'bt_bet_on': [0, 1],
+        })
+        assert calculate_average_implied_prob(data) == pytest.approx(0.375)
+
+    def test_average_overround(self):
+        """Test overround is mean of sum(1/odds_k) - 1 as percent."""
+        data = pd.DataFrame({
+            'bt_stake': [100],
+            'bt_odds': [2.0],
+            'bt_bet_on': [0],
+            'bt_odd_0': [2.0],
+            'bt_odd_1': [1.8],
+        })
+        expected = (0.5 + 1.0 / 1.8 - 1.0) * 100
+        assert calculate_average_overround(data) == pytest.approx(5.5555555556)
+
+    def test_overround_nan_without_odd_columns(self):
+        """Test overround is nan when bt_odd_* columns are missing."""
+        data = pd.DataFrame({
+            'bt_stake': [100],
+            'bt_odds': [2.0],
+            'bt_bet_on': [0],
+        })
+        assert np.isnan(calculate_average_overround(data))
+
+
+class TestScoringRules:
+    def test_brier_score_win_and_loss(self):
+        """Test Brier is mean of (p - y)^2 on the selected outcome."""
+        data = pd.DataFrame({
+            'bt_stake': [100, 100],
+            'bt_odds': [2.0, 2.0],
+            'bt_profit': [100, -100],
+            'bt_win': [True, False],
+            'bt_bet_on': [0, 0],
+            'bt_model_prob_0': [0.6, 0.6],
+        })
+        assert calculate_brier_score(data) == pytest.approx(0.26)
+
+    def test_log_loss_win_and_loss(self):
+        """Test log loss uses -log(p) on a win and -log(1-p) on a loss."""
+        data = pd.DataFrame({
+            'bt_stake': [100, 100],
+            'bt_odds': [2.0, 2.0],
+            'bt_profit': [100, -100],
+            'bt_win': [True, False],
+            'bt_bet_on': [0, 0],
+            'bt_model_prob_0': [0.6, 0.6],
+        })
+        expected = (-np.log(0.6) + -np.log(0.4)) / 2
+        assert calculate_log_loss(data) == pytest.approx(expected)
+
+    def test_ece_single_bin(self):
+        """Test ECE is |accuracy - confidence| when all p share a bin."""
+        data = pd.DataFrame({
+            'bt_stake': [100, 100],
+            'bt_odds': [2.0, 2.0],
+            'bt_profit': [100, -100],
+            'bt_win': [True, False],
+            'bt_bet_on': [0, 0],
+            'bt_model_prob_0': [0.6, 0.6],
+        })
+        assert calculate_ece(data, n_bins=10) == pytest.approx(0.1)
+
+    def test_scoring_nan_without_model_probs(self):
+        """Test Brier, log loss, and ECE are nan without model probs."""
+        data = pd.DataFrame({
+            'bt_stake': [100],
+            'bt_odds': [2.0],
+            'bt_profit': [100],
+            'bt_win': [True],
+            'bt_bet_on': [0],
+        })
+        assert np.isnan(calculate_brier_score(data))
+        assert np.isnan(calculate_log_loss(data))
+        assert np.isnan(calculate_ece(data))
+

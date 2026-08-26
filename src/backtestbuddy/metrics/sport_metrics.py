@@ -6,12 +6,20 @@ returns ``profit / starting_bankroll``, compounded inside each return period
 without inserting empty calendar days.
 
 A bet is counted only when ``bt_stake > 0`` and ``bt_bet_on != -1``.
+
+Sharpe and Sortino annualize with ``output_period`` periods per year.
+The sports default is ``365.25`` (calendar). ``252`` is the equity
+trading-year convention used through 0.1.13. Observed periods/year uses
+the sample density of non-empty return buckets.
 """
 
 from typing import Any, Dict, NamedTuple, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+TRADING_DAYS_PER_YEAR = 252.0
+CALENDAR_DAYS_PER_YEAR = 365.25
 
 
 class DrawdownWindow(NamedTuple):
@@ -92,6 +100,39 @@ def _compound_period_returns(
     return period_returns.dropna()
 
 
+def _observed_periods_per_year(
+    detailed_results: pd.DataFrame,
+    return_period: int = 1,
+) -> float:
+    """Observed non-empty return periods per calendar year.
+
+    ``P = n_periods / years`` with ``years = (max_date - min_date).days /
+    365.25``. This matches the density of the Sharpe/Sortino series (empty
+    calendar days are not filled). Prefer this over 252 or 365.25 when
+    betting days are sparse.
+
+    Args:
+        detailed_results: Backtest result rows with dates and P&L.
+        return_period: Same bucket length as Sharpe/Sortino.
+
+    Returns:
+        Periods per year. ``365.25`` if there are no periods or the date
+        span is zero.
+
+    Example:
+        50 non-empty daily buckets over 365 days → about ``50.0``.
+    """
+    returns = _compound_period_returns(detailed_results, return_period)
+    if len(returns) == 0 or len(detailed_results) == 0:
+        return CALENDAR_DAYS_PER_YEAR
+
+    dates = pd.to_datetime(detailed_results["bt_date_column"])
+    years = (dates.max() - dates.min()).days / CALENDAR_DAYS_PER_YEAR
+    if years == 0:
+        return CALENDAR_DAYS_PER_YEAR
+    return float(len(returns) / years)
+
+
 def _equity_drawdown_stats(equity_curve: np.ndarray) -> DrawdownWindow:
     """Compute max drawdown on a bankroll / equity series.
 
@@ -150,14 +191,17 @@ def calculate_roi(detailed_results: pd.DataFrame) -> float:
 def calculate_sharpe_ratio(
     detailed_results: pd.DataFrame,
     return_period: int = 1,
-    output_period: int = 252,
+    output_period: float = CALENDAR_DAYS_PER_YEAR,
 ) -> float:
     """Calculate the annualized Sharpe ratio (risk-free rate = 0).
 
     Mean and sample standard deviation (``ddof=1``) of compounded period
     returns are scaled by ``output_period`` and ``sqrt(output_period)``.
-    Default ``output_period=252`` is a trading-year convention for this
-    arithmetic scaling; Calmar/CAGR use calendar years instead.
+    ``Sharpe(P) = (mean / std) * sqrt(P)``.
+
+    Default ``output_period=365.25`` is a calendar year (sports). Pass
+    ``252`` for the equity trading-year scale used through 0.1.13, or
+    ``_observed_periods_per_year(...)`` for sample density.
 
     Args:
         detailed_results: Backtest result rows.
@@ -167,6 +211,10 @@ def calculate_sharpe_ratio(
     Returns:
         Sharpe ratio, or ``0.0`` if fewer than two periods, volatility is
         zero, or there is no data.
+
+    Example:
+        Same returns at ``P=365.25`` vs ``P=252`` differ by
+        ``sqrt(365.25 / 252)``.
     """
     returns = _compound_period_returns(detailed_results, return_period)
     if len(returns) < 2:
@@ -261,7 +309,7 @@ def calculate_average_stake(detailed_results: pd.DataFrame) -> float:
 def calculate_sortino_ratio(
     detailed_results: pd.DataFrame,
     return_period: int = 1,
-    output_period: int = 252,
+    output_period: float = CALENDAR_DAYS_PER_YEAR,
     target_return: float = 0.0,
 ) -> float:
     """Calculate the annualized Sortino ratio.
@@ -269,7 +317,8 @@ def calculate_sortino_ratio(
     Downside deviation is ``sqrt(mean(min(0, r - tau)^2))`` over all
     periods (zeros for upside periods), then scaled by
     ``sqrt(output_period)``. This uses ``N`` in the mean, not sample
-    ``N-1``.
+    ``N-1``. Same ``output_period`` convention as Sharpe: default 365.25
+    (calendar), pass 252 for the 0.1.13 trading-year scale.
 
     Args:
         detailed_results: Backtest result rows.
@@ -596,6 +645,10 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
     ROI, CAGR, Sharpe, Sortino, Calmar, and risk-adjusted ROI use the
     full result set so the holding period stays the full backtest.
 
+    Sharpe and Sortino are reported three times with the scale in the
+    key: calendar ``365.25``, trading-year ``252``, and observed
+    non-empty periods per year. There is no unnamed key.
+
     Args:
         detailed_results: Full backtest result rows.
 
@@ -623,6 +676,7 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
     bet_frequency = (
         (n_bets / n_opportunities) * 100 if n_opportunities else 0.0
     )
+    obs_periods_per_year = _observed_periods_per_year(detailed_results)
 
     return {
         "Backtest Start Date": start_date,
@@ -649,8 +703,22 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
         "Bankroll Final [$]": bankroll_final,
         "Bankroll Peak [$]": bankroll_peak,
         "Bankroll Valley [$]": bankroll_valley,
-        "Sharpe Ratio [-]": calculate_sharpe_ratio(detailed_results),
-        "Sortino Ratio [-]": calculate_sortino_ratio(detailed_results),
+        "Sharpe Ratio (365.25) [-]": calculate_sharpe_ratio(detailed_results),
+        "Sharpe Ratio (252) [-]": calculate_sharpe_ratio(
+            detailed_results, output_period=TRADING_DAYS_PER_YEAR
+        ),
+        "Sharpe Ratio (obs/year) [-]": calculate_sharpe_ratio(
+            detailed_results,
+            output_period=obs_periods_per_year,
+        ),
+        "Sortino Ratio (365.25) [-]": calculate_sortino_ratio(detailed_results),
+        "Sortino Ratio (252) [-]": calculate_sortino_ratio(
+            detailed_results, output_period=TRADING_DAYS_PER_YEAR
+        ),
+        "Sortino Ratio (obs/year) [-]": calculate_sortino_ratio(
+            detailed_results,
+            output_period=obs_periods_per_year,
+        ),
         "Calmar Ratio [-]": calculate_calmar_ratio(detailed_results),
         "Max Drawdown [%]": max_drawdown * 100,
         "Max. Drawdown Duration [bets]": max_drawdown_duration,

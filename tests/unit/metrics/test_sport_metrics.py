@@ -7,6 +7,7 @@ import pytest
 import pandas as pd
 import numpy as np
 from backtestbuddy.metrics.sport_metrics import *
+from backtestbuddy.metrics.sport_metrics import _observed_periods_per_year
 
 @pytest.fixture
 def sample_data():
@@ -31,7 +32,7 @@ class TestCalculateROI:
 
 class TestCalculateSharpeRatio:
     def test_calculate_sharpe_ratio(self):
-        """Test Sharpe equals annualized mean / sample std of period returns."""
+        """Test Sharpe at P=252 equals annualized mean / sample std."""
         data = pd.DataFrame({
             'bt_date_column': pd.to_datetime(
                 ['2023-01-01', '2023-01-02', '2023-01-03']
@@ -43,7 +44,24 @@ class TestCalculateSharpeRatio:
         # mean = 0.083333..., sample std (ddof=1) = 0.12583057...
         # Sharpe = mean*252 / (std*sqrt(252))
         expected = 10.513149660756934
-        assert calculate_sharpe_ratio(data) == pytest.approx(expected)
+        assert calculate_sharpe_ratio(
+            data, output_period=252
+        ) == pytest.approx(expected)
+
+    def test_sharpe_default_is_calendar_year(self):
+        """Test default P=365.25 scales vs 252 by sqrt(365.25/252)."""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(
+                ['2023-01-01', '2023-01-02', '2023-01-03']
+            ),
+            'bt_profit': [100, -50, 200],
+            'bt_starting_bankroll': [1000, 1000, 1000],
+        })
+        trading = calculate_sharpe_ratio(data, output_period=252)
+        calendar = calculate_sharpe_ratio(data)
+        assert calendar == pytest.approx(
+            trading * np.sqrt(365.25 / 252)
+        )
 
     def test_sharpe_does_not_mutate_input(self):
         """Test Sharpe copies the frame instead of writing bt_date_column."""
@@ -69,7 +87,7 @@ class TestCalculateSharpeRatio:
         # Sharpe of [0.045, 0.20]
         expected = 17.742697930831255
         wrong_sum = 18.708286933869704
-        result = calculate_sharpe_ratio(data)
+        result = calculate_sharpe_ratio(data, output_period=252)
         assert result == pytest.approx(expected)
         assert result != pytest.approx(wrong_sum, rel=1e-4)
 
@@ -81,6 +99,19 @@ class TestCalculateSharpeRatio:
             'bt_starting_bankroll': [1000],
         })
         assert calculate_sharpe_ratio(data) == 0.0
+
+    def test_observed_periods_per_year_uses_date_span(self):
+        """Test obs/year P is n_unique_days / (span_days / 365.25)."""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(
+                ['2023-01-01', '2023-01-02', '2023-01-03']
+            ),
+            'bt_profit': [100, -50, 200],
+            'bt_starting_bankroll': [1000, 1000, 1000],
+        })
+        years = 2 / 365.25
+        expected_p = 3 / years
+        assert _observed_periods_per_year(data) == pytest.approx(expected_p)
 
 class TestCalculateMaxDrawdown:
     def test_calculate_max_drawdown(self, sample_data):
@@ -181,7 +212,24 @@ class TestCalculateSortinoRatio:
         })
         # r = [0.10, -0.05, 0.20]; shortfalls = [0, -0.05, 0]
         expected = 45.8257569495584
-        assert calculate_sortino_ratio(data) == pytest.approx(expected)
+        assert calculate_sortino_ratio(
+            data, output_period=252
+        ) == pytest.approx(expected)
+
+    def test_sortino_default_is_calendar_year(self):
+        """Test default Sortino P=365.25 scales vs 252 by sqrt(365.25/252)."""
+        data = pd.DataFrame({
+            'bt_date_column': pd.to_datetime(
+                ['2023-01-01', '2023-01-02', '2023-01-03']
+            ),
+            'bt_starting_bankroll': [1000, 1000, 1000],
+            'bt_profit': [100, -50, 200],
+        })
+        trading = calculate_sortino_ratio(data, output_period=252)
+        calendar = calculate_sortino_ratio(data)
+        assert calendar == pytest.approx(
+            trading * np.sqrt(365.25 / 252)
+        )
 
     def test_sortino_ratio_no_negative_returns(self):
         """Test Sortino is inf when there is no downside and mean excess > 0."""
@@ -307,6 +355,21 @@ class TestCalculateAllMetrics:
         assert 'Risk-Adjusted Annual ROI [-]' in metrics
         assert 'CAGR [%]' in metrics
         assert metrics['Max Drawdown [%]'] == pytest.approx(4.54545, rel=1e-5)
+        trading = metrics['Sharpe Ratio (252) [-]']
+        calendar = metrics['Sharpe Ratio (365.25) [-]']
+        assert calendar == pytest.approx(trading * np.sqrt(365.25 / 252))
+        assert metrics['Sortino Ratio (365.25) [-]'] == pytest.approx(
+            metrics['Sortino Ratio (252) [-]'] * np.sqrt(365.25 / 252)
+        )
+        for key in (
+            'Sharpe Ratio (365.25) [-]',
+            'Sharpe Ratio (252) [-]',
+            'Sharpe Ratio (obs/year) [-]',
+            'Sortino Ratio (365.25) [-]',
+            'Sortino Ratio (252) [-]',
+            'Sortino Ratio (obs/year) [-]',
+        ):
+            assert key in metrics
 
 class TestCalculateAverageROIPerBet:
     def test_consistent_profits_micro(self):

@@ -43,14 +43,18 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
 ### Sharpe Ratio
 
 - Description: Measures risk-adjusted return using period returns with a risk-free rate of 0.
-- Formula: $Sharpe = \frac{\bar{r} \cdot P}{s \cdot \sqrt{P}}$ where $\bar{r}$ and $s$ are the mean and sample standard deviation (`ddof=1`) of compounded period returns, and $P$ is `output_period` (default 252).
+- Formula: $Sharpe = \frac{\bar{r} \cdot P}{s \cdot \sqrt{P}} = \frac{\bar{r}}{s}\sqrt{P}$ where $\bar{r}$ and $s$ are the mean and sample standard deviation (`ddof=1`) of compounded period returns, and $P$ is `output_period`.
 - Calculation:
   1. Per-bet return: `r = bt_profit / bt_starting_bankroll`
   2. Compound inside each `return_period`-day bucket: `prod(1 + r) - 1` (empty calendar days are not filled with zeros)
   3. Annualize mean with `* output_period` and sample std with `* sqrt(output_period)`
   4. Sharpe = annualized mean / annualized std (0 if fewer than two periods or std is 0)
 - Columns used: `bt_profit`, `bt_starting_bankroll`, `bt_date_column`
-- Note: This is not excess-return Sharpe with a non-zero $r_f$. Default 252 is a trading-year scale; Calmar and CAGR use calendar years (`days / 365.25`).
+- Annualization (`P`). Same series, three reported keys:
+  - `Sharpe Ratio (365.25) [-]`: `P = 365.25` (calendar year; sports default of `calculate_sharpe_ratio`)
+  - `Sharpe Ratio (252) [-]`: `P = 252` (equity trading-year; 0.1.13 default)
+  - `Sharpe Ratio (obs/year) [-]`: `P = n_periods / years` with `years = (max_date - min_date).days / 365.25` (sample density of non-empty buckets)
+- Note: This is not excess-return Sharpe with a non-zero $r_f$. Calmar and CAGR already use calendar years. 252 overstates annualization when betting days are sparse; obs/year does not. Call `calculate_sharpe_ratio(..., output_period=P)` for any other `P`.
 
 ### Sortino Ratio
 
@@ -65,6 +69,7 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
   5. Sortino = annualized mean excess / annualized downside deviation
 - Edge cases: `inf` if downside deviation is 0 and mean excess > 0; `0.0` if downside is 0 and mean excess is not positive
 - Columns used: `bt_profit`, `bt_starting_bankroll`, `bt_date_column`
+- Annualization: same three `P` values and key names as Sharpe (`Sortino Ratio (365.25) [-]`, `Sortino Ratio (252) [-]`, `Sortino Ratio (obs/year) [-]`).
 
 ### Calmar Ratio
 

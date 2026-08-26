@@ -340,7 +340,11 @@ class TestPredictionBacktest:
         expected_metrics = [
             'Backtest Start Date', 'Backtest End Date', 'Backtest Duration',
             'ROI [%]', 'Total Profit [$]', 'Bankroll Final [$]', 'Bankroll Peak [$]', 'Bankroll Valley [$]',
-            'Sharpe Ratio [-]', 'Sortino Ratio [-]', 'Calmar Ratio [-]',
+            'Sharpe Ratio (365.25) [-]', 'Sharpe Ratio (252) [-]',
+            'Sharpe Ratio (obs/year) [-]',
+            'Sortino Ratio (365.25) [-]', 'Sortino Ratio (252) [-]',
+            'Sortino Ratio (obs/year) [-]',
+            'Calmar Ratio [-]',
             'Max Drawdown [%]', 'Max. Drawdown Duration [bets]',
             'Win Rate [%]', 'Average Odds [-]', 'Highest Winning Odds [-]', 'Highest Losing Odds [-]',
             'Average Stake [$]', 'Best Bet [$]', 'Worst Bet [$]',

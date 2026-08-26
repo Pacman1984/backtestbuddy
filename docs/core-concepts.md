@@ -15,6 +15,12 @@ The `backtest` module consists right now of the `sport_backtest.py` file, which 
 The `metrics` module currently only contains the `sport_metrics.py` file, which provides functionality for calculating various performance metrics after a backtest.
 
 - ROI (Return on Investment): Measures the profitability of your strategy relative to the initial investment. (Percentage)
+- Yield: Total profit over total amount staked. Not the same as bankroll ROI. (Percentage)
+- Expected Yield / Expected Profit: Model `p * odds - 1` sized by stake, on the selected outcome. (Percent / currency)
+- Realized vs Expected Profit: Actual profit minus expected profit on the same bets. (Currency)
+- Average Implied Probability: Mean of `1 / odds` for placed bets (raw, includes vig). (Probability)
+- Average Overround: Mean of `sum_k 1/odds_k - 1` from `bt_odd_*`. (Percentage)
+- Brier Score / Log Loss / ECE: Calibration of the selected-outcome model probability vs win/loss. `nan` without `bt_model_prob_*`. (Score)
 - Total Profit: The total amount of money gained or lost during the backtest period. (Currency)
 - Bankroll Final: The final value of your bankroll at the end of the backtest period. (Currency)
 - Bankroll Peak: The highest value your bankroll reached during the backtest period. (Currency)

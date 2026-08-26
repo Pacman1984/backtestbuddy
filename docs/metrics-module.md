@@ -18,6 +18,25 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
 - Calculation: Sum of all individual bet profits
 - Column used: `bt_profit`
 
+### Yield
+
+- Description: Industry betting yield: total profit over total amount staked. Not bankroll ROI.
+- Formula: $Yield = \frac{\sum profit}{\sum stake} \times 100\%$
+- Calculation: Placed bets only (`bt_stake > 0` and `bt_bet_on != -1`)
+- Columns used: `bt_profit`, `bt_stake`, `bt_bet_on`
+- Note: With unequal stakes, Yield differs from Avg. ROI per Bet (micro).
+
+### Expected Yield / Expected Profit / Realized vs Expected Profit
+
+- Description: Model-implied P&L vs what actually happened, using the probability of the **selected** outcome.
+- Per-bet expected profit: $stake \times (p \cdot odds - 1)$
+- Keys:
+  - `Expected Profit [$]`: sum of per-bet expected profit
+  - `Expected Yield [%]`: expected profit / stake on those rows, times 100
+  - `Realized vs Expected Profit [$]`: `sum(profit) - expected profit` on the same rows
+- Columns used: `bt_stake`, `bt_odds`, `bt_profit`, `bt_bet_on`, `bt_model_prob_{k}`
+- Edge cases: `0.0` if no placed bets; `nan` if model probabilities are missing
+
 ### Bankroll Final
 
 - Description: The final value of your bankroll at the end of the backtest period.
@@ -206,4 +225,40 @@ This is not the same as Calmar's return-curve drawdown.
 - Calculation: `End Date - Start Date`
 - Column used: `bt_date_column`
 
-These metrics provide a comprehensive overview of your betting strategy's performance, allowing you to assess its profitability, risk, and consistency. Use them to compare different strategies and optimize your approach to sports betting.
+## Probability and market
+
+### Average Implied Probability
+
+- Description: Mean raw implied probability of the odds you took: `1 / bt_odds`. Vig is not stripped.
+- Formula: $\overline{1 / odds}$
+- Columns used: `bt_odds`, `bt_stake`, `bt_bet_on`
+- Edge cases: `nan` if no placed bets
+
+### Average Overround
+
+- Description: Mean book margin on the full outcome set for each placed-bet row.
+- Formula: $\overline{\sum_k 1/odds_k - 1} \times 100\%$
+- Columns used: `bt_odd_0`, `bt_odd_1`, … (not the selected `bt_odds` column alone)
+- Edge cases: `nan` if those columns or placed bets are missing
+
+### Brier Score
+
+- Description: Mean squared error of the selected-outcome model probability vs win/loss.
+- Formula: $\mathrm{Brier} = \mathrm{mean}((p - y)^2)$ with $y=1$ on a win, $0$ on a loss
+- Columns used: `bt_model_prob_{k}`, `bt_bet_on`, `bt_win`
+- Edge cases: `0.0` if no placed bets; `nan` if no model probabilities
+
+### Log Loss
+
+- Description: Binary log loss of the selected-outcome probability. `p` clipped to `[1e-15, 1-1e-15]`.
+- Formula: $-\mathrm{mean}(y \log p + (1-y)\log(1-p))$
+- Columns used: same as Brier
+- Edge cases: same as Brier
+
+### ECE (Expected Calibration Error)
+
+- Description: Weighted mean absolute gap between accuracy and confidence in equal-width probability bins on `[0, 1]` (default 10 bins). Empty bins skipped.
+- Formula: $\mathrm{ECE} = \sum_m (n_m / N)\,|\mathrm{acc}_m - \mathrm{conf}_m|$
+- Columns used: same as Brier
+- Edge cases: same as Brier; `calculate_ece(..., n_bins=)` to change the bin count
+

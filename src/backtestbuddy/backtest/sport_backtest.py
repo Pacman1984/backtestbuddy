@@ -7,7 +7,11 @@ import plotly.graph_objects as go
 from sklearn.model_selection import TimeSeriesSplit
 
 from backtestbuddy.metrics.sport_metrics import calculate_all_metrics
-from backtestbuddy.plots.sport_plots import plot_backtest, plot_odds_histogram
+from backtestbuddy.plots.sport_plots import (
+    plot_backtest,
+    plot_calibration,
+    plot_odds_histogram,
+)
 from backtestbuddy.strategies.sport_strategies import (
     BaseStrategy,
     FixedStake,
@@ -229,21 +233,42 @@ class BaseBacktest(ABC):
         self.metrics = calculate_all_metrics(self.detailed_results)
         return self.metrics
 
-    def plot(self):
+    def plot(self, x_axis: str = "bet", show_bookie: bool = True):
         """
         Generate and display a plot of the backtest results.
 
-        This method creates a plot showing the bankroll over time, 
-        win/loss markers, and ROI for each bet.
+        This method creates a plot showing the bankroll over time,
+        underwater drawdown, win/loss markers, and ROI for each bet.
+
+        Args:
+            x_axis: ``"bet"`` (placed-bet index) or ``"date"``.
+            show_bookie: Overlay ``bookie_results`` on the bankroll panel.
 
         Raises:
             ValueError: If the backtest has not been run yet.
         """
         if self.detailed_results is None:
             raise ValueError("Backtest has not been run yet. Call run() first.")
-        
-        fig = plot_backtest(self)
+
+        fig = plot_backtest(self, x_axis=x_axis, show_bookie=show_bookie)
         fig.show()
+
+    def plot_calibration(self, n_bins: Optional[int] = None) -> go.Figure:
+        """Plot a reliability diagram for selected-outcome probabilities.
+
+        Args:
+            n_bins: Equal-width bins on ``[0, 1]``. Defaults to ECE bins.
+
+        Returns:
+            Plotly figure. Empty of observed points when no probabilities
+            were stored.
+
+        Raises:
+            ValueError: If the backtest has not been run yet.
+        """
+        if self.detailed_results is None:
+            raise ValueError("Backtest has not been run yet. Call run() first.")
+        return plot_calibration(self, n_bins=n_bins)
 
     def plot_odds_distribution(self, num_bins: Optional[int] = None) -> go.Figure:
         """

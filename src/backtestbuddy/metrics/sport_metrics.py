@@ -926,6 +926,50 @@ def calculate_log_loss(detailed_results: pd.DataFrame) -> float:
     return float((-(y * np.log(p) + (1.0 - y) * np.log(1.0 - p))).mean())
 
 
+def _reliability_points(
+    detailed_results: pd.DataFrame,
+    n_bins: int = ECE_BINS,
+) -> pd.DataFrame:
+    """Equal-width reliability points for a calibration diagram.
+
+    Bins are ``np.linspace(0, 1, n_bins + 1)``. Empty bins are omitted.
+    Each row is the mean predicted probability, the observed win rate,
+    and the number of placed bets in that bin.
+
+    Args:
+        detailed_results: Backtest result rows with ``bt_model_prob_*``.
+        n_bins: Number of equal-width probability bins.
+
+    Returns:
+        Frame with ``mean_p``, ``win_rate``, and ``count``. Empty if
+        there are no selected-outcome probabilities.
+
+    Example:
+        All ``p=0.6`` and half win → one row ``(0.6, 0.5, N)``.
+    """
+    frame = _placed_probability_frame(detailed_results)
+    empty = pd.DataFrame(columns=["mean_p", "win_rate", "count"])
+    if frame.empty:
+        return empty
+    bins = np.linspace(0.0, 1.0, n_bins + 1)
+    frame = frame.copy()
+    frame["bin"] = pd.cut(frame["p"], bins=bins, include_lowest=True)
+    rows = []
+    for _, group in frame.groupby("bin", observed=True):
+        if group.empty:
+            continue
+        rows.append(
+            {
+                "mean_p": float(group["p"].mean()),
+                "win_rate": float(group["win"].mean()),
+                "count": int(len(group)),
+            }
+        )
+    if not rows:
+        return empty
+    return pd.DataFrame(rows)
+
+
 def calculate_ece(
     detailed_results: pd.DataFrame,
     n_bins: int = ECE_BINS,
@@ -946,25 +990,14 @@ def calculate_ece(
     Example:
         All p=0.6 and half win → one occupied bin, ECE = ``|0.5-0.6|=0.1``.
     """
-    frame = _placed_probability_frame(detailed_results)
     if _filter_placed_bets(detailed_results).empty:
         return 0.0
-    if frame.empty:
+    points = _reliability_points(detailed_results, n_bins=n_bins)
+    if points.empty:
         return float("nan")
-    bins = np.linspace(0.0, 1.0, n_bins + 1)
-    frame = frame.copy()
-    frame["bin"] = pd.cut(
-        frame["p"], bins=bins, include_lowest=True
-    )
-    n = len(frame)
-    ece = 0.0
-    for _, group in frame.groupby("bin", observed=True):
-        if group.empty:
-            continue
-        acc = float(group["win"].mean())
-        conf = float(group["p"].mean())
-        ece += (len(group) / n) * abs(acc - conf)
-    return float(ece)
+    n = int(points["count"].sum())
+    gap = (points["win_rate"] - points["mean_p"]).abs()
+    return float((points["count"] / n * gap).sum())
 
 
 def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:

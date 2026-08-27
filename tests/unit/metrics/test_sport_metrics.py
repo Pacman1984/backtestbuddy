@@ -7,7 +7,10 @@ import pytest
 import pandas as pd
 import numpy as np
 from backtestbuddy.metrics.sport_metrics import *
-from backtestbuddy.metrics.sport_metrics import _observed_periods_per_year
+from backtestbuddy.metrics.sport_metrics import (
+    _observed_periods_per_year,
+    _reliability_points,
+)
 
 @pytest.fixture
 def sample_data():
@@ -925,4 +928,52 @@ class TestScoringRules:
         assert np.isnan(calculate_brier_score(data))
         assert np.isnan(calculate_log_loss(data))
         assert np.isnan(calculate_ece(data))
+
+
+class TestReliabilityPoints:
+    """Unit tests for equal-width calibration bins."""
+
+    def test_equal_width_bins_merge_distinct_p_in_same_interval(self):
+        """0.21 and 0.29 share (0.2, 0.3] when n_bins=10."""
+        data = pd.DataFrame({
+            'bt_stake': [100, 100, 100, 100],
+            'bt_odds': [2.0, 2.0, 2.0, 2.0],
+            'bt_profit': [-100, 100, -100, 100],
+            'bt_win': [False, True, False, True],
+            'bt_bet_on': [0, 0, 0, 0],
+            'bt_model_prob_0': [0.21, 0.29, 0.21, 0.29],
+        })
+        points = _reliability_points(data, n_bins=10)
+        assert len(points) == 1
+        assert points["mean_p"].iloc[0] == pytest.approx(0.25)
+        assert points["win_rate"].iloc[0] == pytest.approx(0.5)
+        assert int(points["count"].iloc[0]) == 4
+
+    def test_uses_selected_outcome_probability(self):
+        """Decoy p on the other outcome is ignored."""
+        data = pd.DataFrame({
+            'bt_stake': [100, 100],
+            'bt_odds': [2.0, 2.0],
+            'bt_profit': [-100, -100],
+            'bt_win': [False, False],
+            'bt_bet_on': [1, 1],
+            'bt_model_prob_0': [0.9, 0.9],
+            'bt_model_prob_1': [0.2, 0.2],
+        })
+        points = _reliability_points(data, n_bins=10)
+        assert len(points) == 1
+        assert points["mean_p"].iloc[0] == pytest.approx(0.2)
+        assert points["win_rate"].iloc[0] == pytest.approx(0.0)
+
+    def test_empty_without_model_probs(self):
+        """No probability columns yields an empty reliability table."""
+        data = pd.DataFrame({
+            'bt_stake': [100],
+            'bt_odds': [2.0],
+            'bt_profit': [100],
+            'bt_win': [True],
+            'bt_bet_on': [0],
+        })
+        points = _reliability_points(data)
+        assert points.empty
 

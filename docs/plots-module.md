@@ -10,67 +10,57 @@ The `plots` module contains functions for visualizing backtest results and analy
 
 #### `plot_backtest`
 
-Creates a three-panel plot of **placed bets** for the main strategy: bankroll (max drawdown window from the last peak to the trough), per-bet ROI, and stake as a percent of starting bankroll. Bookie results are not plotted.
+Creates a four-panel plot of **placed bets** for the main strategy: bankroll (max drawdown window from the last peak to the trough), underwater drawdown, per-bet ROI, and stake as a percent of starting bankroll. A right-hand table shows `calculate_all_metrics`.
 
 **Signature:**
 
 ```python
-def plot_backtest(backtest: Any) -> go.Figure
+def plot_backtest(
+    backtest: Any,
+    x_axis: Literal["bet", "date"] = "bet",
+    show_bookie: bool = True,
+) -> go.Figure
 ```
 
 **Description:**
 
-This function generates a multi-panel plot with three subplots:
-
-1. **Bankroll Over Time**: Shows the bankroll progression for the main strategy with:
-   - Bankroll line over time
-   - Win markers (green triangles) indicating winning bets
-   - Loss markers (red triangles) indicating losing bets
-   - Max Drawdown highlighted with a shaded region
-   - Interactive hover information showing game index, date, starting/ending bankroll, stake, and stake percentage
-
-2. **ROI**: Displays the Return on Investment for each bet as scatter points
-   - Shows individual bet performance
-   - Includes a zero line reference
-
-3. **Stake Percentage**: Shows the stake percentage (stake/bankroll) for each bet as a bar chart
-   - Helps visualize bet sizing over time
-
-4. **Metrics table**: All values from `calculate_all_metrics` in a right-hand Metric/Value table aligned with the three panels. Non-finite values (NaN, inf) show as "—".
+1. **Bankroll Over Time**: Main strategy bankroll, win/loss markers, max-drawdown vrect. Optional dotted **Bookie** overlay from `bookie_results`.
+2. **Drawdown**: Full underwater path `(equity / running peak - 1) * 100`.
+3. **ROI**: Per-bet return with a zero line.
+4. **Stake Percentage**: Stake / starting bankroll.
+5. **Metrics table**: All `calculate_all_metrics` values. Non-finite values show as "—".
 
 **Parameters:**
 
-- `backtest` (Any): An instance of a Backtest class (e.g., `ModelBacktest` or `PredictionBacktest`) containing the results. The backtest must have been run (i.e., `backtest.run()` must have been called) and must have a `detailed_results` attribute populated.
-
-**Returns:**
-
-- `go.Figure`: A Plotly figure object containing the backtest results plot. You can call `.show()` on this figure to display it, or use it in other Plotly operations.
-
-**Features:**
-
-- Only includes bets that were actually placed (filters out non-bets)
-- Displays all calculated metrics in a table on the right of the plot
-- Interactive hover tooltips with detailed bet information
-- Max Drawdown visualization with annotation showing percentage and duration
+- `backtest`: A run backtest (`detailed_results` populated).
+- `x_axis`: `"bet"` (compact placed-bet index, default) or `"date"` (`bt_date_column`). Use `"date"` when the strategy skips bets that the bookie still takes, so the overlay lines up.
+- `show_bookie`: Overlay `bookie_results` on the bankroll panel. KellyCriterion and ValueBet stake 0 on the bookie path, so that line is flat.
 
 **Example Usage:**
 
 ```python
-from backtestbuddy.backtest.sport_backtest import PredictionBacktest
-from backtestbuddy.strategies.sport_strategies import FixedStake
-
-# ... setup backtest ...
-backtest = PredictionBacktest(...)
-backtest.run()
-
-# Plot the results
-backtest.plot()  # Uses plot_backtest internally and displays the figure
-
-# Or use the function directly for more control
 from backtestbuddy.plots.sport_plots import plot_backtest
-fig = plot_backtest(backtest)
-fig.show()  # Display the plot
-fig.write_html("backtest_results.html")  # Save to HTML file
+
+backtest.run()
+backtest.plot()  # displays plot_backtest
+fig = plot_backtest(backtest, x_axis="date")
+fig.show()
+```
+
+#### `plot_calibration`
+
+Reliability diagram for the model probability of the **selected** outcome. Equal-width bins on `[0, 1]`, same as `calculate_ece`. Marker size scales with bets in the bin. The diagonal is perfect calibration. Without `bt_model_prob_*`, only the diagonal is drawn.
+
+```python
+def plot_calibration(
+    backtest: Any,
+    n_bins: Optional[int] = None,
+) -> go.Figure
+```
+
+```python
+fig = backtest.plot_calibration()
+fig.show()
 ```
 
 #### `plot_odds_histogram`
@@ -136,17 +126,14 @@ fig.write_html("odds_distribution.html")  # Save to HTML file
 
 ### Direct Method Calls
 
-Both plotting functions can be called directly from the backtest instance:
+The plotting functions can be called from the backtest instance:
 
 ```python
-# After running a backtest
 backtest.run()
-
-# Plot backtest results (displays automatically)
-backtest.plot()
-
-# Plot odds distribution (returns figure, doesn't auto-display)
+backtest.plot(x_axis="date")
 fig = backtest.plot_odds_distribution()
+fig.show()
+fig = backtest.plot_calibration()
 fig.show()
 ```
 
@@ -155,7 +142,11 @@ fig.show()
 You can also import and use the plotting functions directly:
 
 ```python
-from backtestbuddy.plots.sport_plots import plot_backtest, plot_odds_histogram
+from backtestbuddy.plots.sport_plots import (
+    plot_backtest,
+    plot_calibration,
+    plot_odds_histogram,
+)
 
 # After running backtest
 fig1 = plot_backtest(backtest)
@@ -205,7 +196,8 @@ fig.write_image("backtest_results.pdf")
 
 Both `ModelBacktest` and `PredictionBacktest` classes provide convenient methods that wrap these plotting functions:
 
-- `backtest.plot()` - Calls `plot_backtest()` and displays the figure
+- `backtest.plot(x_axis="bet", show_bookie=True)` - Calls `plot_backtest()` and displays the figure
 - `backtest.plot_odds_distribution(num_bins)` - Calls `plot_odds_histogram()` and returns the figure
+- `backtest.plot_calibration(n_bins)` - Calls `plot_calibration()` and returns the figure
 
 These methods handle the integration automatically, ensuring the backtest has been run before plotting.

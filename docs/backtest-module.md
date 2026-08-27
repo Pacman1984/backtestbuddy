@@ -30,7 +30,8 @@ The `BaseBacktest` class is an abstract base class that provides a framework for
     - Additional columns from the original dataset.
 - `get_bookie_results(self)`: Returns a DataFrame containing the results of the bookie strategy simulation.
 - `calculate_metrics(self)`: Calculates performance metrics based on the backtest results.
-- `plot(self)`: Generates and displays a plot of the backtest results.
+- `plot(self, x_axis="bet", show_bookie=True)`: Generates and displays a plot of the backtest results.
+- `plot_calibration(self, n_bins)`: Reliability diagram of selected-outcome probabilities.
 - `plot_odds_distribution(self, num_bins)`: Generates a histogram plot of the odds distribution.
 
 ### `ModelBacktest`

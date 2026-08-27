@@ -10,7 +10,11 @@ from .strategies.sport_strategies import (
     ValueBet,
 )
 from .metrics.sport_metrics import calculate_all_metrics
-from .plots.sport_plots import plot_backtest, plot_odds_histogram
+from .plots.sport_plots import (
+    plot_backtest,
+    plot_calibration,
+    plot_odds_histogram,
+)
 
 __all__ = [
     "BaseBacktest",
@@ -24,5 +28,6 @@ __all__ = [
     "OddsFilter",
     "calculate_all_metrics",
     "plot_backtest",
+    "plot_calibration",
     "plot_odds_histogram",
 ]

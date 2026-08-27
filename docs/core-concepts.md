@@ -57,5 +57,6 @@ The `strategies` module currently only contains the `sport_strategies.py` file, 
 
 The `plots` module currently only contains the `sport_plots.py` file, which provides functionality for plotting backtest results and any specific plots you implement.
 
-- `plot_backtest`: Creates a plot of the backtest results, including the bankroll over time, ROI for each bet, and stake percentage.
-- `plot_odds_histogram`: Creates a histogram plot of the odds distribution, splitting each bin into winning and losing bets, and adding dotted lines for break-even win rates.
+- `plot_backtest`: Four panels (bankroll, underwater drawdown, ROI, stake %) plus a metrics table. Optional bookie overlay. `x_axis` is `"bet"` or `"date"`.
+- `plot_calibration`: Reliability diagram of selected-outcome model probabilities vs observed win rate.
+- `plot_odds_histogram`: Histogram of played odds, split into winning and losing bets, with break-even win-rate lines.

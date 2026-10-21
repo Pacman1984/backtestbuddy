@@ -11,6 +11,7 @@ from backtestbuddy.metrics.sport_metrics import (
     ECE_BINS,
     _equity_drawdown_stats,
     _filter_placed_bets,
+    _opening_bankroll,
     _reliability_points,
     calculate_all_metrics,
     calculate_ece,
@@ -80,23 +81,30 @@ def _panel_x(frame: pd.DataFrame, x_axis: str) -> pd.Series:
     raise ValueError("x_axis must be 'bet' or 'date'.")
 
 
-def _underwater_pct(equity: np.ndarray) -> np.ndarray:
+def _underwater_pct(
+    equity: np.ndarray, initial: Optional[float] = None
+) -> np.ndarray:
     """Percent below running peak: ``(equity / cummax - 1) * 100``.
 
     Args:
         equity: Sequential bankroll values.
+        initial: Opening bankroll; seeds the running peak so early
+            losses show as drawdown. Not part of the output.
 
     Returns:
-        Underwater series. Empty input stays empty; non-positive peaks
-        become 0.
+        Underwater series aligned with ``equity``. Empty input stays
+        empty; non-positive peaks become 0.
 
     Example:
-        ``[100, 110, 99]`` → ``[0, 0, -10]``.
+        ``[100, 110, 99]`` → ``[0, 0, -10]``; ``[90]`` with
+        ``initial=100`` → ``[-10]``.
     """
     if len(equity) == 0:
         return np.asarray(equity, dtype=float)
     values = np.asarray(equity, dtype=float)
     peak = np.maximum.accumulate(values)
+    if initial is not None:
+        peak = np.maximum(peak, float(initial))
     with np.errstate(divide="ignore", invalid="ignore"):
         underwater = (values / peak - 1.0) * 100.0
     return np.nan_to_num(underwater, nan=0.0, posinf=0.0, neginf=0.0)
@@ -135,6 +143,7 @@ def plot_backtest(
     x_main = _panel_x(bet_placed, x_axis)
     date_strings = bet_placed["bt_date_column"].astype(str)
     equity = bet_placed["bt_ending_bankroll"].to_numpy()
+    opening = _opening_bankroll(bet_placed)
 
     fig = make_subplots(
         rows=4,
@@ -200,7 +209,7 @@ def plot_backtest(
     fig.add_trace(
         go.Scatter(
             x=x_main,
-            y=_underwater_pct(equity),
+            y=_underwater_pct(equity, initial=opening),
             name="Drawdown",
             fill="tozeroy",
             line=dict(color="#dc2626", width=1.5),
@@ -266,11 +275,12 @@ def plot_backtest(
         col=1,
     )
 
-    window = _equity_drawdown_stats(equity)
+    # Indices include the opening bankroll at 0; a peak there maps to bet 1.
+    window = _equity_drawdown_stats(equity, initial=opening)
     if window.magnitude > 0 and len(bet_placed) > 0:
         fig.add_vrect(
-            x0=x_main.iloc[window.start],
-            x1=x_main.iloc[window.end],
+            x0=x_main.iloc[max(window.start - 1, 0)],
+            x1=x_main.iloc[window.end - 1],
             fillcolor="rgba(220, 38, 38, 0.12)",
             opacity=1.0,
             layer="below",
@@ -501,30 +511,36 @@ def plot_odds_histogram(
     """
     detailed_results = _filter_placed_bets(backtest.detailed_results)
 
-    odds_column = next(
-        (
-            col
-            for col in detailed_results.columns
-            if "odds" in col.lower()
-        ),
-        None,
-    )
-    if odds_column is None:
+    if "bt_odds" not in detailed_results.columns:
         raise ValueError(
-            "Could not find an odds column in the detailed results."
+            "Could not find the 'bt_odds' column in the detailed results."
         )
 
-    odds = detailed_results[odds_column]
-    wins = detailed_results["bt_win"] > 0
+    odds = pd.to_numeric(detailed_results["bt_odds"], errors="coerce")
+    wins = detailed_results["bt_win"] == True
 
-    valid_mask = (
-        ~(odds.isna() | wins.isna()) & (detailed_results["bt_bet_on"] != -1)
-    )
+    valid_mask = odds.notna() & (odds > 0)
     odds = odds[valid_mask]
     wins = wins[valid_mask]
 
+    if odds.empty:
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No placed bets",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+            font=dict(size=13, color="#64748b"),
+        )
+        fig.update_layout(
+            title="Distribution of played Odds and Break-Even Win Rates"
+        )
+        return fig
+
     if num_bins is None:
-        num_bins = int(np.sqrt(len(odds)))
+        num_bins = max(1, int(np.sqrt(len(odds))))
     bin_edges = np.logspace(
         np.log10(odds.min()), np.log10(odds.max()), num_bins + 1
     )

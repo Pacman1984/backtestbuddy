@@ -162,20 +162,20 @@ def _compound_period_returns(
     if len(detailed_results) == 0:
         return pd.Series(dtype=float)
 
-    df = detailed_results.copy()
-    dates = pd.to_datetime(df["bt_date_column"])
-    per_bet = (df["bt_profit"] / df["bt_starting_bankroll"]).astype(float)
+    dates = pd.to_datetime(detailed_results["bt_date_column"])
+    per_bet = (
+        detailed_results["bt_profit"] / detailed_results["bt_starting_bankroll"]
+    ).astype(float)
     per_bet.index = pd.DatetimeIndex(dates)
 
-    grouped = per_bet.groupby(pd.Grouper(freq=f"{return_period}D"))
-
-    def _period_return(group: pd.Series) -> float:
-        if group.empty:
-            return np.nan
-        return float((1.0 + group).prod() - 1.0)
-
-    period_returns = grouped.apply(_period_return)
-    return period_returns.dropna()
+    # prod(1 + r) - 1 == expm1(sum(log1p(r))); a vectorized sum avoids a
+    # Python call per bucket. A -100% bet gives -inf, which maps back to -1.
+    with np.errstate(divide="ignore"):
+        log_growth = np.log1p(per_bet)
+    grouped = log_growth.groupby(pd.Grouper(freq=f"{return_period}D"))
+    sizes = grouped.size()
+    period_returns = np.expm1(grouped.sum()[sizes > 0])
+    return period_returns.astype(float)
 
 
 def _observed_periods_per_year(
@@ -211,7 +211,27 @@ def _observed_periods_per_year(
     return float(len(returns) / years)
 
 
-def _equity_drawdown_stats(equity_curve: np.ndarray) -> DrawdownWindow:
+def _opening_bankroll(detailed_results: pd.DataFrame) -> Optional[float]:
+    """Bankroll before the first row, or None if it is not available.
+
+    Args:
+        detailed_results: Backtest result rows.
+
+    Returns:
+        ``bt_starting_bankroll`` of the first row.
+    """
+    if (
+        len(detailed_results) == 0
+        or "bt_starting_bankroll" not in detailed_results.columns
+    ):
+        return None
+    return float(detailed_results["bt_starting_bankroll"].iloc[0])
+
+
+def _equity_drawdown_stats(
+    equity_curve: np.ndarray,
+    initial: Optional[float] = None,
+) -> DrawdownWindow:
     """Compute max drawdown on a bankroll / equity series.
 
     Duration starts at the last peak at or before the trough
@@ -219,15 +239,23 @@ def _equity_drawdown_stats(equity_curve: np.ndarray) -> DrawdownWindow:
 
     Args:
         equity_curve: Sequential bankroll values.
+        initial: Opening bankroll. When given it is prepended as index 0,
+            so losses on the first bets count as drawdown. Indices in the
+            result are then shifted by one relative to ``equity_curve``.
 
     Returns:
         DrawdownWindow with positive magnitude. All zeros if there is no
         drawdown or the series is empty.
+
+    Example:
+        ``[900, 800]`` with ``initial=1000`` → magnitude 0.2.
     """
     if len(equity_curve) == 0:
         return DrawdownWindow(0.0, 0, 0, 0)
 
     equity = np.asarray(equity_curve, dtype=float)
+    if initial is not None:
+        equity = np.concatenate(([float(initial)], equity))
     cummax = np.maximum.accumulate(equity)
     with np.errstate(divide="ignore", invalid="ignore"):
         drawdown = (cummax - equity) / cummax
@@ -313,6 +341,9 @@ def calculate_max_drawdown(detailed_results: pd.DataFrame) -> float:
     Args:
         detailed_results: Backtest result rows with ``bt_ending_bankroll``.
 
+    The opening bankroll (``bt_starting_bankroll`` of the first row) is
+    the first peak, so early losses count.
+
     Returns:
         Negative fraction (e.g. ``-0.15`` for a 15% peak-to-trough drop),
         or ``0.0`` if there is no drawdown.
@@ -323,7 +354,8 @@ def calculate_max_drawdown(detailed_results: pd.DataFrame) -> float:
     if "bt_ending_bankroll" not in detailed_results.columns:
         return 0.0
     magnitude, _, _, _ = _equity_drawdown_stats(
-        detailed_results["bt_ending_bankroll"].to_numpy()
+        detailed_results["bt_ending_bankroll"].to_numpy(),
+        initial=_opening_bankroll(detailed_results),
     )
     return -magnitude
 
@@ -511,7 +543,8 @@ def calculate_drawdowns(detailed_results: pd.DataFrame) -> Tuple[float, int]:
     if len(detailed_results) == 0:
         return 0.0, 0
     window = _equity_drawdown_stats(
-        detailed_results["bt_ending_bankroll"].to_numpy()
+        detailed_results["bt_ending_bankroll"].to_numpy(),
+        initial=_opening_bankroll(detailed_results),
     )
     return window.magnitude, window.duration
 

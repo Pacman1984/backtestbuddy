@@ -100,7 +100,12 @@ class FixedStake(BaseStrategy):
 
         Args:
             stake: Absolute amount (>= 1) or current-bankroll fraction (< 1).
+
+        Raises:
+            ValueError: If ``stake`` is negative.
         """
+        if stake < 0:
+            raise ValueError("stake must be non-negative")
         self.stake = stake
 
     def calculate_stake(
@@ -201,7 +206,10 @@ class KellyCriterion(BaseStrategy):
         max_bet: Cap as a fraction of bankroll.
         min_kelly: Minimum Kelly fraction required to bet.
         min_prob: Minimum model probability required to bet.
+        requires_probabilities: Always ``True``.
     """
+
+    requires_probabilities = True
 
     def __init__(
         self,
@@ -217,7 +225,15 @@ class KellyCriterion(BaseStrategy):
             max_bet: Maximum stake as a fraction of bankroll.
             min_kelly: Skip bets with Kelly at or below this value.
             min_prob: Skip bets with model probability below this value.
+
+        Raises:
+            ValueError: If ``downscaling`` is negative or ``max_bet`` is
+                outside ``[0, 1]``.
         """
+        if downscaling < 0:
+            raise ValueError("downscaling must be non-negative")
+        if not 0 <= max_bet <= 1:
+            raise ValueError("max_bet must be in [0, 1]")
         self.downscaling = downscaling
         self.max_bet = max_bet
         self.min_kelly = min_kelly
@@ -418,7 +434,12 @@ class ValueBet(BaseStrategy):
         Args:
             min_ev: Skip outcomes with EV at or below this threshold.
             stake: Absolute amount (>= 1) or current-bankroll fraction (< 1).
+
+        Raises:
+            ValueError: If ``stake`` is negative.
         """
+        if stake < 0:
+            raise ValueError("stake must be non-negative")
         self.min_ev = min_ev
         self.stake = stake
 

@@ -355,16 +355,19 @@ class TestPredictionBacktest:
             'Max Drawdown [%]', 'Max. Drawdown Duration [bets]',
             'Win Rate [%]', 'Average Odds [-]',
             'Average Implied Prob [-]', 'Average Overround [%]',
-            'Brier Score [-]', 'Log Loss [-]', 'ECE [-]',
+            'Brier Score (placed) [-]', 'Brier Score (all games) [-]',
+            'Log Loss (placed) [-]', 'Log Loss (all games) [-]',
+            'ECE (placed) [-]', 'ECE (all games) [-]',
             'Highest Winning Odds [-]', 'Highest Losing Odds [-]',
             'Average Stake [$]', 'Best Bet [$]', 'Worst Bet [$]',
             'Total Bets', 'Total Opportunities', 'Bet Frequency [%]',
             'CAGR [%]', 'Risk-Adjusted Annual ROI [-]',
-            'Avg. ROI per Bet [%] (micro)', 'Avg. ROI per Bet [%] (macro)',
+            'Avg. ROI per Bet [%] (micro)',
             'Avg. ROI per Year [%] (micro)', 'Avg. ROI per Year [%] (macro)',
         ]
         for metric in expected_metrics:
             assert metric in metrics, f"Expected metric '{metric}' not found in calculated metrics"
+        assert 'Avg. ROI per Bet [%] (macro)' not in metrics
 
     def test_plot_method_runs_without_error(self, sample_data):
         """Test that plot() method runs without error after backtest."""

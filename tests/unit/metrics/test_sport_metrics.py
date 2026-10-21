@@ -104,7 +104,7 @@ class TestCalculateSharpeRatio:
         assert calculate_sharpe_ratio(data) == 0.0
 
     def test_observed_periods_per_year_uses_date_span(self):
-        """Test obs/year P is n_unique_days / (span_days / 365.25)."""
+        """Test obs/year P is n_periods / ((span_days + 1) / 365.25)."""
         data = pd.DataFrame({
             'bt_date_column': pd.to_datetime(
                 ['2023-01-01', '2023-01-02', '2023-01-03']
@@ -112,9 +112,11 @@ class TestCalculateSharpeRatio:
             'bt_profit': [100, -50, 200],
             'bt_starting_bankroll': [1000, 1000, 1000],
         })
-        years = 2 / 365.25
+        # Three consecutive daily periods cover three days, not two
+        years = 3 / 365.25
         expected_p = 3 / years
         assert _observed_periods_per_year(data) == pytest.approx(expected_p)
+        assert expected_p == pytest.approx(365.25)
 
 class TestCalculateMaxDrawdown:
     def test_calculate_max_drawdown(self, sample_data):

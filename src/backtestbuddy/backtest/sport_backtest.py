@@ -254,11 +254,13 @@ class BaseBacktest(ABC):
         fig = plot_backtest(self, x_axis=x_axis, show_bookie=show_bookie)
         fig.show()
 
-    def plot_calibration(self, n_bins: Optional[int] = None) -> go.Figure:
-        """Plot a reliability diagram for selected-outcome probabilities.
+    def plot_calibration(self, n_bins: Optional[int] = None, scope: str = "placed") -> go.Figure:
+        """Plot a reliability diagram for model probabilities.
 
         Args:
             n_bins: Equal-width bins on ``[0, 1]``. Defaults to ECE bins.
+            scope: ``"placed"`` (selected outcome of placed bets) or ``"all"``
+                (every outcome of every game).
 
         Returns:
             Plotly figure. Empty of observed points when no probabilities
@@ -269,7 +271,7 @@ class BaseBacktest(ABC):
         """
         if self.detailed_results is None:
             raise ValueError("Backtest has not been run yet. Call run() first.")
-        return plot_calibration(self, n_bins=n_bins)
+        return plot_calibration(self, n_bins=n_bins, scope=scope)
 
     def plot_odds_distribution(self, num_bins: Optional[int] = None) -> go.Figure:
         """

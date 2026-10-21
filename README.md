@@ -89,6 +89,22 @@ backtest.plot_odds_distribution()
 
 ## Changelog
 
+### Unreleased
+
+**⚠️ Breaking Changes (metric values and keys):**
+- **Brier / Log Loss / ECE**: Keys now name the scope: `Brier Score (placed) [-]` etc. (selected outcome of placed bets, the old values) and new `(all games) [-]` variants over every outcome of every game. `calculate_brier_score`, `calculate_log_loss`, `calculate_ece`, and `plot_calibration` take `scope="placed" | "all"`.
+- **Sharpe / Sortino / Calmar**: Period returns use placed bets only. Days with only skipped opportunities no longer enter as 0% periods, so results no longer depend on whether skipped rows are in the data.
+- **Sharpe / Sortino (obs/year)**: Periods per year use `span_days + return_period`, so `n` consecutive betting days annualize to 365.25 instead of more.
+- **Avg. ROI per Year [%] (micro)**: Weighted by the days each calendar year covers; partial years no longer count as full years.
+- **Avg. ROI per Bet [%] (macro)**: Removed from `calculate_all_metrics` (bankroll ROI / bet count has no per-bet meaning with compounding stakes). The function remains; use Yield per bet.
+- **Max Drawdown**: Starts from the opening bankroll, so early losses count (from the audit fixes).
+
+**Fixes and speed (audit):**
+- Stable same-date ordering, KellyCriterion requires probabilities, stake validation, empty odds histogram, `ModelBacktest(feature_columns=...)`, ~12x faster backtest loops.
+
+**Testing:**
+- `tests/integration/test_metrics_reference.py` cross-checks every metric against a naive reference implementation on 20 randomized backtests.
+
 ### Version 0.1.13 (2026-08-26)
 
 **⚠️ Breaking Changes:**

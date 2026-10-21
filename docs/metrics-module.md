@@ -24,7 +24,13 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
 - Formula: $Yield = \frac{\sum profit}{\sum stake} \times 100\%$
 - Calculation: Placed bets only (`bt_stake > 0` and `bt_bet_on != -1`)
 - Columns used: `bt_profit`, `bt_stake`, `bt_bet_on`
-- Note: With unequal stakes, Yield differs from Avg. ROI per Bet (micro).
+- Note: With unequal stakes, Yield differs from Avg. ROI per Bet (micro). Yield is the per-bet return measure; the former `Avg. ROI per Bet [%] (macro)` (bankroll ROI / number of bets) was removed from `calculate_all_metrics` because bankroll ROI compounds across bets.
+
+### Avg. ROI per Year (micro / macro)
+
+- Micro: duration-weighted mean of calendar-year ROIs. Each year's ROI is `(year_end / year_start - 1) * 100`, weighted by the days that year covers (first to last row in the year, inclusive). A two-week partial year therefore does not count as much as a full year.
+- Macro: total ROI divided by the backtest length in years (linear, not compounded; see CAGR for the geometric rate).
+- Columns used: `bt_starting_bankroll`, `bt_ending_bankroll`, `bt_date_column`
 
 ### Expected Yield / Expected Profit / Realized vs Expected Profit
 
@@ -64,15 +70,15 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
 - Description: Measures risk-adjusted return using period returns with a risk-free rate of 0.
 - Formula: $Sharpe = \frac{\bar{r} \cdot P}{s \cdot \sqrt{P}} = \frac{\bar{r}}{s}\sqrt{P}$ where $\bar{r}$ and $s$ are the mean and sample standard deviation (`ddof=1`) of compounded period returns, and $P$ is `output_period`.
 - Calculation:
-  1. Per-bet return: `r = bt_profit / bt_starting_bankroll`
-  2. Compound inside each `return_period`-day bucket: `prod(1 + r) - 1` (empty calendar days are not filled with zeros)
+  1. Per-bet return of **placed bets only**: `r = bt_profit / bt_starting_bankroll`
+  2. Compound inside each `return_period`-day bucket: `prod(1 + r) - 1`. Periods without a placed bet are skipped, whether they are empty calendar days or contain only skipped opportunities, so the ratio does not depend on whether skipped rows are in the data.
   3. Annualize mean with `* output_period` and sample std with `* sqrt(output_period)`
   4. Sharpe = annualized mean / annualized std (0 if fewer than two periods or std is 0)
 - Columns used: `bt_profit`, `bt_starting_bankroll`, `bt_date_column`
 - Annualization (`P`). Same series, three reported keys:
   - `Sharpe Ratio (365.25) [-]`: `P = 365.25` (calendar year; sports default of `calculate_sharpe_ratio`)
   - `Sharpe Ratio (252) [-]`: `P = 252` (equity trading-year; 0.1.13 default)
-  - `Sharpe Ratio (obs/year) [-]`: `P = n_periods / years` with `years = (max_date - min_date).days / 365.25` (sample density of non-empty buckets)
+  - `Sharpe Ratio (obs/year) [-]`: `P = n_periods / years` with `years = ((max_date - min_date).days + return_period) / 365.25` (sample density of periods with placed bets; `n` consecutive betting days give `P = 365.25`)
 - Note: This is not excess-return Sharpe with a non-zero $r_f$. Calmar and CAGR already use calendar years. 252 overstates annualization when betting days are sparse; obs/year does not. Call `calculate_sharpe_ratio(..., output_period=P)` for any other `P`.
 
 ### Sortino Ratio
@@ -140,6 +146,7 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
 
 - Description: Largest peak-to-trough decline on the **bankroll** equity curve (`bt_ending_bankroll`).
 - Formula: magnitude $= \max((peak - equity) / peak)$; reported as a **positive** percent in `calculate_all_metrics` (`Max Drawdown [%]`). The helper `calculate_max_drawdown` returns the signed decimal (`-magnitude`).
+- Opening bankroll: `bt_starting_bankroll` of the first row is the first peak, so losses on the first bets count as drawdown.
 - Peak rule: duration starts at the **last** peak at or before the trough (`end - start + 1` rows).
 - Row filter: `calculate_all_metrics` uses placed bets only (`bt_stake > 0` and `bt_bet_on != -1`).
 - Column used: `bt_ending_bankroll`
@@ -241,16 +248,23 @@ This is not the same as Calmar's return-curve drawdown.
 - Columns used: `bt_odd_0`, `bt_odd_1`, … (not the selected `bt_odds` column alone)
 - Edge cases: `nan` if those columns or placed bets are missing
 
+### Calibration scopes
+
+Brier, Log Loss, and ECE are reported in two scopes. Each function takes `scope="placed"` (default) or `scope="all"`; `plot_calibration` takes the same argument.
+
+- `(placed)`: the model probability of the **selected outcome of placed bets**. These are the games where the strategy disagreed with the market, so this measures calibration where money was at risk, not the model overall.
+- `(all games)`: every outcome of every game with model probabilities, bet or not. Each `(game, outcome k)` pair is one binary prediction with `y = 1` if outcome `k` happened. Use this for the model's overall calibration.
+
 ### Brier Score
 
-- Description: Mean squared error of the selected-outcome model probability vs win/loss.
-- Formula: $\mathrm{Brier} = \mathrm{mean}((p - y)^2)$ with $y=1$ on a win, $0$ on a loss
-- Columns used: `bt_model_prob_{k}`, `bt_bet_on`, `bt_win`
-- Edge cases: `0.0` if no placed bets; `nan` if no model probabilities
+- Description: Mean squared error of model probability vs result, in the chosen scope.
+- Formula: $\mathrm{Brier} = \mathrm{mean}((p - y)^2)$ with $y=1$ if the outcome happened, else $0$
+- Columns used: `bt_model_prob_{k}`, `bt_bet_on`, `bt_win` (placed); `bt_model_prob_{k}`, `bt_actual_outcome` (all games)
+- Edge cases: `0.0` if no placed bets (placed scope); `nan` if no model probabilities
 
 ### Log Loss
 
-- Description: Binary log loss of the selected-outcome probability. `p` clipped to `[1e-15, 1-1e-15]`.
+- Description: Binary log loss of model probabilities in the chosen scope. `p` clipped to `[1e-15, 1-1e-15]`.
 - Formula: $-\mathrm{mean}(y \log p + (1-y)\log(1-p))$
 - Columns used: same as Brier
 - Edge cases: same as Brier

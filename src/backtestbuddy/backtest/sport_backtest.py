@@ -62,7 +62,8 @@ class BaseBacktest(ABC):
             cv_schema (Optional[Any], optional): The cross-validation schema to be used. 
                 Defaults to TimeSeriesSplit with 5 splits if None is provided.
         """
-        self.data = data.sort_values(date_column).reset_index(drop=True)
+        # Stable sort keeps the input order of same-date rows reproducible.
+        self.data = data.sort_values(date_column, kind="mergesort").reset_index(drop=True)
         self.odds_columns = odds_columns
         self.outcome_column = outcome_column
         self.date_column = date_column
@@ -205,7 +206,7 @@ class BaseBacktest(ABC):
             **outcome,
             'bt_stake': stake,
             'bt_potential_return': potential_return,
-            'bt_date_column': self.data.iloc[index][self.date_column],
+            'bt_date_column': self.data[self.date_column].iat[index],
         }
 
         # Add individual odds for each outcome
@@ -336,7 +337,7 @@ class BaseBacktest(ABC):
             'bt_profit': profit,
             'bt_roi': roi,
             'bt_odds': odds[bet_on],  # Add the odds for the bet placed
-            'bt_date_column': self.data.iloc[index][self.date_column],
+            'bt_date_column': self.data[self.date_column].iat[index],
         }
 
         # Add individual odds for each outcome
@@ -366,7 +367,8 @@ class ModelBacktest(BaseBacktest):
                  model: Any,
                  initial_bankroll: float = 1000.0,
                  strategy: Optional[BaseStrategy] = None, 
-                 cv_schema: Optional[Any] = None):
+                 cv_schema: Optional[Any] = None,
+                 feature_columns: Optional[List[str]] = None):
         """
         Initialize the ModelBacktester.
 
@@ -379,8 +381,19 @@ class ModelBacktest(BaseBacktest):
             initial_bankroll (float): The initial bankroll for the simulation. Defaults to 1000.0.
             strategy (Optional[BaseStrategy], optional): The betting strategy to be used.
             cv_schema (Optional[Any], optional): The cross-validation schema to be used.
+            feature_columns (Optional[List[str]], optional): Columns passed to the model.
+                Defaults to every column except the date and outcome columns. Set this
+                explicitly to keep IDs, prediction or post-event columns out of the model.
+
+        Raises:
+            ValueError: If a feature column is missing from the dataset.
         """
         super().__init__(data, odds_columns, outcome_column, date_column, initial_bankroll, model, strategy, cv_schema)
+        if feature_columns is not None:
+            missing = [col for col in feature_columns if col not in data.columns]
+            if missing:
+                raise ValueError(f"Feature columns not found in the dataset: {missing}")
+        self.feature_columns = feature_columns
 
     def run(self) -> None:
         """
@@ -395,8 +408,8 @@ class ModelBacktest(BaseBacktest):
         current_bankroll = self.initial_bankroll
         bookie_bankroll = self.initial_bankroll
 
-        # Define feature columns, excluding date and outcome columns
-        feature_columns = [col for col in self.data.columns if col not in [self.date_column, self.outcome_column]]
+        # Define feature columns, excluding date and outcome columns unless set explicitly
+        feature_columns = self.feature_columns or [col for col in self.data.columns if col not in [self.date_column, self.outcome_column]]
 
         for fold, (train_index, test_index) in enumerate(self.cv_schema.split(self.data)):
             X_train, X_test = self.data.iloc[train_index], self.data.iloc[test_index]
@@ -421,9 +434,14 @@ class ModelBacktest(BaseBacktest):
                     "\n[[1.0], [1.0], ...] or [[0.3, 0.5, 0.2], [0.1, 0.7, 0.2], ...]"
                 )
 
+            # Convert once per fold; per-row .iloc lookups dominate runtime otherwise
+            odds_rows = X_test[self.odds_columns].to_numpy(dtype=float).tolist()
+            outcomes = y_test.tolist()
+            records = X_test.to_dict("records")
+
             for i, (prediction, probs) in enumerate(zip(predictions, probabilities)):
-                odds = X_test.iloc[i][self.odds_columns].tolist()
-                actual_outcome = y_test.iloc[i]
+                odds = odds_rows[i]
+                actual_outcome = outcomes[i]
 
                 # Ensure probs match the number of odds
                 if len(probs) != len(odds):
@@ -439,7 +457,7 @@ class ModelBacktest(BaseBacktest):
                 current_bankroll = result['bt_ending_bankroll']
                 
                 # Add all original features to the result
-                result.update(X_test.iloc[i].to_dict())
+                result.update(records[i])
                 all_results.append(result)
 
                 # Simulate bookie bet
@@ -447,7 +465,7 @@ class ModelBacktest(BaseBacktest):
                 bookie_bankroll = bookie_result['bt_ending_bankroll']
                 
                 # Add all original features to the bookie result
-                bookie_result.update(X_test.iloc[i].to_dict())
+                bookie_result.update(records[i])
                 bookie_results.append(bookie_result)
 
         self.detailed_results = pd.DataFrame(all_results)
@@ -541,11 +559,12 @@ class PredictionBacktest(BaseBacktest):
         current_bankroll = self.initial_bankroll
         bookie_bankroll = self.initial_bankroll
 
-        for i, row in self.data.iterrows():
+        # to_dict("records") keeps per-column dtypes and is far faster than iterrows()
+        for i, row in enumerate(self.data.to_dict("records")):
             prediction = row[self.prediction_column]
             actual_outcome = row[self.outcome_column]
-            odds = row[self.odds_columns].tolist()
-            model_probs = row[self.model_prob_columns].tolist() if self.model_prob_columns else None
+            odds = [row[col] for col in self.odds_columns]
+            model_probs = [row[col] for col in self.model_prob_columns] if self.model_prob_columns else None
 
             bet_details = self.strategy.get_bet_details(odds, current_bankroll, model_probs=model_probs, prediction=prediction)
             stake, bet_on, additional_info = bet_details
@@ -553,13 +572,13 @@ class PredictionBacktest(BaseBacktest):
             result = self._simulate_bet(0, i, prediction, bet_on, actual_outcome, odds, current_bankroll, stake, model_probs=model_probs, **additional_info)
             current_bankroll = result['bt_ending_bankroll']
             
-            result.update(row.to_dict())
+            result.update(row)
             all_results.append(result)
 
             bookie_result = self._simulate_bookie_bet(0, i, odds, actual_outcome, bookie_bankroll)
             bookie_bankroll = bookie_result['bt_ending_bankroll']
             
-            bookie_result.update(row.to_dict())
+            bookie_result.update(row)
             bookie_results.append(bookie_result)
 
         self.detailed_results = pd.DataFrame(all_results)

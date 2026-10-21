@@ -24,13 +24,25 @@ Understanding the stake is crucial for interpreting the results of your backtest
 
 This abstract method must be implemented by all concrete strategy classes. It calculates the stake for a bet based on the given odds, current bankroll, and other optional parameters.
 
-###### `select_bet`
+##### `select_bet`
 
 This abstract method must be implemented by all concrete strategy classes. It selects the outcome to bet on based on the given odds, model probabilities, and other optional parameters.
 
-###### `get_bet_details`
+##### `get_bet_details`
 
-This method combines `calculate_stake` and `select_bet` to provide complete bet details. It returns a tuple containing the stake, the index of the outcome to bet on, and additional information specific to the strategy.
+This method combines `calculate_stake` and `select_bet` to provide complete bet details. It returns a tuple containing the stake, the index of the outcome to bet on, and additional information specific to the strategy. Each key of the additional information becomes a `bt_{key}` column in the results.
+
+### Which strategy?
+
+| Strategy | Needs model probabilities | Picks the outcome by | Stake |
+|---|---|---|---|
+| `FixedStake` | No | Highest probability, else prediction, else favourite | Fixed amount or % of current bankroll |
+| `KellyCriterion` | **Yes** | Highest Kelly fraction | Scaled Kelly fraction of current bankroll |
+| `ValueBet` | **Yes** | Highest expected value above `min_ev` | Fixed amount or % of current bankroll |
+| `UnitStake` | No | Same as `FixedStake` | Unit-loss, unit-win, or unit-impact plan |
+| `OddsFilter` | Only if the inner strategy does | Inner strategy, among outcomes in the odds band | Inner strategy |
+
+`PredictionBacktest` raises a `ValueError` if a strategy that needs probabilities gets no `model_prob_columns`.
 
 ### Implemented Strategies
 
@@ -40,24 +52,27 @@ The `FixedStake` class implements a fixed-stake strategy. It bets either a fixed
 
 ##### Attributes (FixedStake)
 
-- `stake` (float): Absolute amount (>= 1) or current-bankroll fraction (< 1).
+- `stake` (float): Absolute amount (>= 1) or current-bankroll fraction (< 1). Negative values raise a `ValueError`.
 
 ##### Methods (FixedStake)
 
-Implements all methods from `BaseStrategy` with logic specific to fixed stake betting.
+Implements all methods from `BaseStrategy`. Outcome selection: the highest model probability if probabilities are passed, else the prediction, else the favourite (lowest odds). Passing `model_prob_columns` therefore changes which outcome FixedStake bets on.
 
 #### KellyCriterion
 
 The `KellyCriterion` class implements a betting strategy based on the Kelly Criterion. This strategy calculates the optimal fraction of the **current** bankroll to bet from decimal odds: $f^* = (p(odds-1)-(1-p))/(odds-1)$. Odds `<= 1` yield a fraction of 0.
 
+The stake is `min(f* × downscaling, max_bet) × current bankroll`, on the outcome with the highest Kelly fraction.
+
 Bookie simulations call `calculate_stake` without model probabilities, so Kelly always stakes 0 on the bookie path. Use FixedStake if you need a bookie benchmark.
 
 ##### Attributes (KellyCriterion)
 
-- `downscaling` (float): Factor to scale down the Kelly fraction (default is 0.5 for "half Kelly").
-- `max_bet` (float): Maximum bet size as a fraction of the bankroll (default is 0.1 or 10%).
+- `downscaling` (float): Factor to scale down the Kelly fraction (default is 0.5 for "half Kelly"). Must be non-negative.
+- `max_bet` (float): Maximum bet size as a fraction of the bankroll (default is 0.1 or 10%). Must be in `[0, 1]`.
 - `min_kelly` (float): Minimum Kelly fraction required to place a bet (default is 0).
 - `min_prob` (float): Minimum model probability required to place a bet (default is 0).
+- `requires_probabilities` (bool): Always `True`. `PredictionBacktest` raises if `model_prob_columns` is omitted.
 
 ##### Methods (KellyCriterion)
 
@@ -80,7 +95,7 @@ Requires model probabilities. Bookie simulations call `calculate_stake` without 
 ##### Attributes (ValueBet)
 
 - `min_ev` (float): Minimum expected value to place a bet (default 0). Outcomes with EV at or below this skip.
-- `stake` (float): Absolute amount (>= 1) or current-bankroll fraction (< 1).
+- `stake` (float): Absolute amount (>= 1) or current-bankroll fraction (< 1). Negative values raise a `ValueError`.
 - `requires_probabilities` (bool): Always `True`. `PredictionBacktest` will raise if `model_prob_columns` is omitted.
 
 ##### Methods (ValueBet)
@@ -141,29 +156,43 @@ To add a new strategy:
 3. Add any additional methods or attributes specific to the new strategy.
 4. Optionally, override the `__str__` method to provide a custom string representation.
 
-Example template for a new strategy:
+Example: bet a fixed amount on the favourite, but only when its odds are at least `min_odds`.
 
-``` python
-class NewStrategy(BaseStrategy):
-    def __init__(self, param1, param2):
-        self.param1 = param1
-        self.param2 = param2
+```python
+from typing import Any, Dict, List, Optional, Tuple
 
-    def calculate_stake(self, odds: List[float], bankroll: float, model_probs: Optional[List[float]] = None, **kwargs: Any) -> float:
-        # Your stake calculation logic here
-        pass
+from backtestbuddy import BaseStrategy
 
-    def select_bet(self, odds: List[float], model_probs: Optional[List[float]] = None, **kwargs: Any) -> int:
-        # Your bet selection logic here
-        pass
 
-    def get_bet_details(self, odds: List[float], bankroll: float, model_probs: Optional[List[float]] = None, prediction: Optional[int] = None, **kwargs: Any) -> Tuple[float, int, Dict[str, Any]]:
-        stake = self.calculate_stake(odds, bankroll, model_probs, **kwargs)
-        bet_on = self.select_bet(odds, model_probs, prediction, **kwargs)
-        additional_info = {
-            "custom_info_1": some_value,
-            "custom_info_2": another_value,
-            # Add any other relevant information
-        }
-        return stake, bet_on, additional_info
+class FavouriteAboveOdds(BaseStrategy):
+    """Bet `stake` on the favourite when its odds are at least `min_odds`."""
+
+    def __init__(self, stake: float = 10.0, min_odds: float = 1.3):
+        self.stake = stake
+        self.min_odds = min_odds
+
+    def select_bet(self, odds: List[float], model_probs: Optional[List[float]] = None,
+                   prediction: Optional[int] = None, **kwargs: Any) -> int:
+        favourite = odds.index(min(odds))
+        return favourite if odds[favourite] >= self.min_odds else -1
+
+    def calculate_stake(self, odds: List[float], bankroll: float,
+                        model_probs: Optional[List[float]] = None, **kwargs: Any) -> float:
+        if self.select_bet(odds, model_probs) == -1:
+            return 0.0
+        return min(self.stake, bankroll)
+
+    def get_bet_details(self, odds: List[float], bankroll: float,
+                        model_probs: Optional[List[float]] = None,
+                        prediction: Optional[int] = None,
+                        **kwargs: Any) -> Tuple[float, int, Dict[str, Any]]:
+        stake = self.calculate_stake(odds, bankroll, model_probs)
+        bet_on = self.select_bet(odds, model_probs, prediction) if stake > 0 else -1
+        return stake, bet_on, {"favourite_odds": min(odds)}  # becomes bt_favourite_odds
 ```
+
+Rules the backtest relies on:
+
+- Return `bet_on = -1` and stake 0 to skip a match.
+- `select_bet` must accept `prediction` as the third positional argument.
+- Set `requires_probabilities = True` on the class if the strategy cannot work without model probabilities.

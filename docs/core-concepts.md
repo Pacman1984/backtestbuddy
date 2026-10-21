@@ -1,62 +1,68 @@
 # Core Concepts
 
-BacktestBuddy is designed to be a flexible and extensible framework for backtesting various strategies. Here are the core concepts:
+This page explains how a backtest works. For exact signatures and formulas, follow the links to the reference pages.
 
-## Sport Backtest
+## The simulation loop
 
-The `backtest` module consists right now of the `sport_backtest.py` file, which contains the main classes for running sports betting backtests. This includes:
+A backtest walks through your matches in date order and, for each one:
 
-- `BaseBacktest`: The base class for all sports backtests.
-- `ModelBacktest`: A class for backtesting machine learning models in sports.
-- `PredictionBacktest`: A class for backtesting based on precomputed sports predictions.
+1. Hands the odds, the **current** bankroll, and your model's probabilities and prediction to the strategy.
+2. The strategy returns a **stake** and the **outcome to bet on** (or skips with stake 0).
+3. The bet is settled against the actual outcome: profit `stake * (odds - 1)` on a win, `-stake` on a loss.
+4. The bankroll is updated, and the next match uses the new bankroll.
 
-## Sport Metrics
+Every match produces one row in `detailed_results`, whether a bet was placed or not.
 
-The `metrics` module currently only contains the `sport_metrics.py` file, which provides functionality for calculating various performance metrics after a backtest.
+```text
+match 1 ──► strategy ──► stake, outcome ──► settle ──► bankroll ──► match 2 ──► …
+```
 
-- ROI (Return on Investment): Measures the profitability of your strategy relative to the initial investment. (Percentage)
-- Yield: Total profit over total amount staked. Not the same as bankroll ROI. (Percentage)
-- Expected Yield / Expected Profit: Model `p * odds - 1` sized by stake, on the selected outcome. (Percent / currency)
-- Realized vs Expected Profit: Actual profit minus expected profit on the same bets. (Currency)
-- Average Implied Probability: Mean of `1 / odds` for placed bets (raw, includes vig). (Probability)
-- Average Overround: Mean of `sum_k 1/odds_k - 1` from `bt_odd_*`. (Percentage)
-- Brier Score / Log Loss / ECE: Calibration of model probabilities, reported as `(placed)` (selected outcome of placed bets) and `(all games)` (every outcome of every game). `nan` without `bt_model_prob_*`. (Score)
-- Total Profit: The total amount of money gained or lost during the backtest period. (Currency)
-- Bankroll Final: The final value of your bankroll at the end of the backtest period. (Currency)
-- Bankroll Peak: The highest value your bankroll reached during the backtest period. (Currency)
-- Bankroll Valley: The lowest value your bankroll reached during the backtest period. (Currency)
-- Sharpe Ratio: Annualized mean of compounded period returns (placed bets only) over sample std (`ddof=1`); risk-free rate is 0. Keys name the scale: `(365.25)`, `(252)`, `(obs/year)`. Function default `P` is 365.25. (Ratio)
-- Sortino Ratio: Same period returns and the same three named `P` scales as Sharpe. Volatility is downside deviation below target 0 (zeros included for upside periods). `inf` if no downside and positive mean excess. (Ratio)
-- Calmar Ratio: Geometric annual return / |max drawdown on the compounded return curve|. Not the same drawdown as Max Drawdown. (Ratio)
-- Max Drawdown: Largest peak-to-trough decline on the bankroll, starting from the opening bankroll, reported as a positive percent. Duration is last peak to trough in placed bets. (Percentage)
-- Max Drawdown Duration: Inclusive bet count from the last peak before the trough to the trough. (Number of bets)
-- Win Rate: Winning placed bets / placed bets. A placed bet has `bt_stake > 0` and `bt_bet_on != -1`. (Percentage)
-- Average Odds: The average odds of all bets placed. (Decimal odds)
-- Highest Winning Odds: The highest odds of a winning bet. (Decimal odds)
-- Highest Losing Odds: The highest odds of a losing bet. (Decimal odds)
-- Average Stake: The average amount staked per bet. (Currency)
-- Best Bet: The highest profit achieved from a single bet. (Currency)
-- Worst Bet: The largest loss incurred from a single bet. (Currency)
-- Total Bets: The total number of bets placed during the backtest period. (Count)
-- Total Opportunities: The total number of betting opportunities during the backtest period. (Count)
-- Bet Frequency: The percentage of bets placed out of the total opportunities. (Percentage)
-- Backtest Duration: The time period covered by the backtest. (Time period, e.g., days, months, years)
+**Placed bet**: a row with `bt_stake > 0` and `bt_bet_on != -1`. Win rate, odds, stake, drawdown, and risk ratios count placed bets only.
 
-## Sport Strategies
+**Sequential bankroll**: percentage stakes (Kelly, `FixedStake(0.02)`) are sized from the bankroll after all earlier matches. Matches with the same date are settled one after another in input order, so a later match on the same day already "knows" the result of an earlier one. Keep this in mind for large same-day slates with percentage staking.
 
-The `strategies` module currently only contains the `sport_strategies.py` file, which provides functionality for defining betting strategies and any specific strategies you implement.
+## Two backtest classes
 
-- `BaseStrategy`: The base class for all strategies.
-- `FixedStake`: A strategy that bets a fixed dollar amount, or a fixed percentage of the **current** bankroll (`stake < 1`).
-- `KellyCriterion`: A strategy that bets a fraction of the bankroll based on the Kelly Criterion.
-- `ValueBet`: Bets only when `p * odds - 1` exceeds `min_ev`; picks the highest EV. Requires model probabilities.
-- `UnitStake`: Unit-loss, unit-win, or unit-impact staking (Cortés 2020). `unit` is always a dollar amount.
-- `OddsFilter`: Restricts an inner strategy to an inclusive odds band (`min_odds` / `max_odds`).
+| | `PredictionBacktest` | `ModelBacktest` |
+|---|---|---|
+| Input | Your predictions and probabilities as columns | Feature columns and a model with `fit`, `predict`, `predict_proba` |
+| Training | None; you are responsible for avoiding look-ahead | Walk-forward: `TimeSeriesSplit(n_splits=5)` by default, trained on past folds only |
+| Matches bet on | All rows | Test folds only; the first training block is never bet on |
 
-## Sport Plots
+## The bookie benchmark
 
-The `plots` module currently only contains the `sport_plots.py` file, which provides functionality for plotting backtest results and any specific plots you implement.
+Every run also simulates a simple benchmark in `bookie_results`: always bet the favourite (lowest odds), sized by your strategy without model probabilities. It answers "would betting the favourite have done as well?". Kelly and ValueBet need probabilities, so their benchmark line stays flat.
 
-- `plot_backtest`: Four panels (bankroll, underwater drawdown, ROI, stake %) plus a metrics table. Optional bookie overlay. `x_axis` is `"bet"` or `"date"`.
-- `plot_calibration`: Reliability diagram of model probabilities vs observed frequency; `scope="placed"` or `"all"`.
-- `plot_odds_histogram`: Histogram of played odds, split into winning and losing bets, with break-even win-rate lines.
+## Odds you bet vs reference odds
+
+- `odds_columns` are the odds you actually bet into.
+- `closing_odds_columns` (optional) are a reference line, usually the closing odds, for closing line value (CLV).
+- `odds_haircut` lowers the odds you bet into, to simulate getting worse prices. `stress_test()` runs several haircuts at once.
+
+## Metrics at a glance
+
+`calculate_metrics()` returns one dictionary. The keys fall into these groups:
+
+| Group | Examples | Question it answers |
+|---|---|---|
+| Returns | ROI, Yield, CAGR, Total Profit | Did the strategy make money, relative to bankroll and to stakes? |
+| Risk | Max Drawdown, Sharpe, Sortino, Calmar | How bumpy was the ride? |
+| Betting | Win Rate, Average Odds, Total Bets, Bet Frequency | What did the strategy actually bet on? |
+| Probability | Brier, Log Loss, ECE, Expected Yield | Are the model's probabilities calibrated? |
+| Market | Brier (market), CLV, Beat Closing Line, Overround | Does the model beat the bookmaker's line? |
+
+Units are in the key: `[%]`, `[$]`, `[-]` (ratio), or none for counts. Values that cannot be computed, e.g. CLV without closing odds, are `nan`.
+
+See the [Metrics Module](metrics-module.md) for every key and formula.
+
+## Package layout
+
+| Module | Contents |
+|---|---|
+| `backtestbuddy.backtest` | `PredictionBacktest`, `ModelBacktest`, `BaseBacktest` |
+| `backtestbuddy.strategies` | `FixedStake`, `KellyCriterion`, `ValueBet`, `UnitStake`, `OddsFilter`, `BaseStrategy` |
+| `backtestbuddy.metrics` | `calculate_all_metrics` and the individual metric functions |
+| `backtestbuddy.odds` | `remove_margin` |
+| `backtestbuddy.plots` | `plot_backtest`, `plot_calibration`, `plot_odds_histogram` |
+
+The common names are importable from the top level: `import backtestbuddy as btb`, then `btb.PredictionBacktest`, `btb.KellyCriterion`, `btb.remove_margin`, and so on.

@@ -49,17 +49,21 @@ fig.show()
 
 #### `plot_calibration`
 
-Reliability diagram for the model probability of the **selected** outcome. Equal-width bins on `[0, 1]`, same as `calculate_ece`. Marker size scales with bets in the bin. The diagonal is perfect calibration. Without `bt_model_prob_*`, only the diagonal is drawn.
+Reliability diagram: predicted probability against how often the outcome actually happened. Equal-width bins on `[0, 1]`, same as `calculate_ece`. Marker size scales with the number of predictions in the bin. Points on the diagonal mean perfect calibration. Without `bt_model_prob_*`, only the diagonal is drawn.
 
 ```python
 def plot_calibration(
     backtest: Any,
     n_bins: Optional[int] = None,
+    scope: Literal["placed", "all"] = "placed",
 ) -> go.Figure
 ```
 
+- `scope="placed"` (default): the selected outcome of placed bets, i.e. where money was at risk.
+- `scope="all"`: every outcome of every game, i.e. the model's overall calibration.
+
 ```python
-fig = backtest.plot_calibration()
+fig = backtest.plot_calibration(scope="all")
 fig.show()
 ```
 
@@ -103,14 +107,9 @@ The histogram uses logarithmic binning to better represent the distribution of o
 
 **Example Usage:**
 
+All examples on this page assume `backtest` is a backtest you have already run (see [Getting Started](getting-started.md)).
+
 ```python
-from backtestbuddy.backtest.sport_backtest import PredictionBacktest
-from backtestbuddy.strategies.sport_strategies import FixedStake
-
-# ... setup backtest ...
-backtest = PredictionBacktest(...)
-backtest.run()
-
 # Plot odds distribution
 fig = backtest.plot_odds_distribution()  # Uses plot_odds_histogram internally
 fig.show()
@@ -181,23 +180,24 @@ fig.show()
 
 Plotly figures can be exported to various formats:
 
+`backtest.plot()` only displays the chart. To save it, get the figure from `plot_backtest`:
+
 ```python
-fig = backtest.plot()
+from backtestbuddy.plots.sport_plots import plot_backtest
 
-# Save as HTML (interactive)
-fig.write_html("backtest_results.html")
+fig = plot_backtest(backtest)
+fig.write_html("backtest_results.html")  # interactive, opens in any browser
 
-# Save as static image (requires kaleido)
-fig.write_image("backtest_results.png")
-fig.write_image("backtest_results.pdf")
+# Static images need the optional kaleido package (pip install kaleido):
+# fig.write_image("backtest_results.png")
 ```
 
 ## Integration with Backtest Classes
 
 Both `ModelBacktest` and `PredictionBacktest` classes provide convenient methods that wrap these plotting functions:
 
-- `backtest.plot(x_axis="bet", show_bookie=True)` - Calls `plot_backtest()` and displays the figure
+- `backtest.plot(x_axis="bet", show_bookie=True)` - Calls `plot_backtest()` and displays the figure (returns `None`)
 - `backtest.plot_odds_distribution(num_bins)` - Calls `plot_odds_histogram()` and returns the figure
-- `backtest.plot_calibration(n_bins)` - Calls `plot_calibration()` and returns the figure
+- `backtest.plot_calibration(n_bins, scope="placed")` - Calls `plot_calibration()` and returns the figure
 
 These methods handle the integration automatically, ensuring the backtest has been run before plotting.

@@ -13,7 +13,7 @@
 | `outcome_column` | required | Index of the outcome that happened, 0-based in the order of `odds_columns`. |
 | `date_column` | required | Match date or timestamp. |
 | `initial_bankroll` | `1000.0` | Starting bankroll. |
-| `strategy` | `FixedStake(0.01)` | Any strategy from the [Strategies Module](strategies-module.md). |
+| `strategy` | `FixedStake(fraction=0.01)` | Any strategy from the [Strategies Module](strategies-module.md). |
 | `closing_odds_columns` | `None` | Reference odds per outcome, same order as `odds_columns`, for CLV. Usually closing odds, but any later or sharper line works, e.g. opening odds as `odds_columns` and a late feed as the reference. |
 | `odds_haircut` | `0.0` | Lower every bet odd by this fraction (`0.02` = 2% worse). The strategy decides and bets settle at the lowered odds, floored at 1.0. Model features, probabilities, and closing odds are unchanged. Must be in `[0, 1)`. |
 | `margin_method` | `"multiplicative"` | Margin removal for no-vig CLV and the market baseline: `multiplicative`, `additive`, `power`, or `shin`. See the [Odds Module](odds-module.md). |
@@ -46,6 +46,7 @@
 | `run()` | `None` | Runs the simulation and fills `detailed_results` and `bookie_results`. |
 | `get_detailed_results()` | DataFrame | One row per match for your strategy. Raises if `run()` was not called. |
 | `get_bookie_results()` | DataFrame | Same for the favourite benchmark. |
+| `history` (attribute) | `BetHistory` | Ledger of the bets settled in the last `run()`; see [Strategies with memory](strategies-module.md#strategies-with-memory-bethistory). |
 | `calculate_metrics()` | dict | All metrics; also stored in `.metrics`. Uses `margin_method`. |
 | `stress_test(haircuts=(0, 0.01, 0.02, 0.03), metrics=...)` | DataFrame | Re-runs with each haircut; one row per haircut. Leaves this backtest's results unchanged. |
 | `plot(x_axis="bet", show_bookie=True)` | `None` | Shows the bankroll chart. Use `plot_backtest(backtest)` to get the figure object. |
@@ -74,7 +75,7 @@
 | `bt_profit` | Profit of the bet; 0 if no bet |
 | `bt_roi` | Profit / stake in percent |
 | `bt_starting_bankroll`, `bt_ending_bankroll` | Bankroll before and after the match |
-| Strategy extras | e.g. `bt_kelly_fraction_{i}` (Kelly), `bt_ev_{i}` (ValueBet), `bt_plan` and `bt_unit` (UnitStake) |
+| Strategy extras | e.g. `bt_kelly_fraction_{i}` (Kelly), `bt_ev_{i}` (ValueBet), `bt_plan` and `bt_unit` (UnitStake), `bt_risk_limit` (RiskLimits: the rule that changed or blocked the bet) |
 
 ## Stress test
 
@@ -99,7 +100,7 @@ data["prediction"] = (data["prob_a"] < 0.5).astype(int)
 backtest = btb.PredictionBacktest(
     data, ["odds_a", "odds_b"], "winner", "date", "prediction",
     model_prob_columns=["prob_a", "prob_b"],
-    strategy=btb.ValueBet(min_ev=0.02, stake=10),
+    strategy=btb.ValueBet(min_ev=0.02, amount=10),
 )
 backtest.run()
 print(backtest.stress_test(haircuts=[0, 0.01, 0.02, 0.03]))

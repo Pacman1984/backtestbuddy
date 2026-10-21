@@ -37,7 +37,7 @@ def _seed_backtest():
     })
     backtest = btb.PredictionBacktest(
         data, ["odds_a", "odds_b"], "winner", "date", "prediction",
-        model_prob_columns=["prob_a", "prob_b"], strategy=btb.FixedStake(10),
+        model_prob_columns=["prob_a", "prob_b"], strategy=btb.FixedStake(amount=10),
     )
     backtest.run()
     return backtest
@@ -54,6 +54,8 @@ def _runnable_blocks(path):
     return blocks
 
 
+# Docs must show the explicit amount=/fraction= form, never the ambiguous legacy stake=
+@pytest.mark.filterwarnings("error:.*is ambiguous:DeprecationWarning")
 @pytest.mark.parametrize("path", DOC_FILES, ids=lambda p: p.name)
 def test_doc_examples_run(path, monkeypatch, tmp_path):
     monkeypatch.setattr(go.Figure, "show", lambda self, *args, **kwargs: None)

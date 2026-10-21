@@ -19,7 +19,7 @@ match 1 ──► strategy ──► stake, outcome ──► settle ──► b
 
 **Placed bet**: a row with `bt_stake > 0` and `bt_bet_on != -1`. Win rate, odds, stake, drawdown, and risk ratios count placed bets only.
 
-**Sequential bankroll**: percentage stakes (Kelly, `FixedStake(0.02)`) are sized from the bankroll after all earlier matches. Matches with the same date are settled one after another in input order, so a later match on the same day already "knows" the result of an earlier one. Keep this in mind for large same-day slates with percentage staking.
+**Sequential bankroll**: percentage stakes (Kelly, `FixedStake(fraction=0.02)`) are sized from the bankroll after all earlier matches. Matches with the same date are settled one after another in input order, so a later match on the same day already "knows" the result of an earlier one. Keep this in mind for large same-day slates with percentage staking.
 
 ## Two backtest classes
 

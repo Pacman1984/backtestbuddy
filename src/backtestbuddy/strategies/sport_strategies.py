@@ -1,17 +1,129 @@
 """Betting strategies for sports backtests.
 
-FixedStake sizes bets as a constant dollar amount or as a fraction of the
+FixedStake sizes bets as a constant amount or as a fraction of the
 *current* bankroll. KellyCriterion sizes bets from the decimal-odds Kelly
 fraction, scaled by ``downscaling`` and capped by ``max_bet``. ValueBet
 selects the highest expected-value outcome above ``min_ev``. UnitStake
 implements unit-loss, unit-win, and unit-impact plans. OddsFilter restricts
-an inner strategy to an odds band.
+an inner strategy to an odds band. RiskLimits caps and pauses an inner
+strategy using the run's ``BetHistory``.
+
+Stake sizes are explicit: ``amount=`` is currency, ``fraction=`` is a share
+of the current bankroll. The older single ``stake=`` argument still works
+(below 1 = fraction, 1 and above = amount) but warns, because ``0.99``
+and ``1.0`` mean very different bets.
 """
 
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import numpy as np
+
+from backtestbuddy.strategies.history import BetHistory
+
+
+class StakeSize:
+    """How much to stake: a fixed amount or a fraction of the bankroll.
+
+    Exactly one of ``amount`` and ``fraction`` is set.
+
+    Attributes:
+        amount: Currency amount per bet, capped at the current bankroll.
+        fraction: Share of the current bankroll per bet, in ``[0, 1]``.
+
+    Example:
+        >>> StakeSize(fraction=0.02).resolve(1000)
+        20.0
+        >>> StakeSize(amount=0.5).resolve(1000)  # half a unit, not 50%
+        0.5
+    """
+
+    def __init__(
+        self, amount: Optional[float] = None, fraction: Optional[float] = None
+    ):
+        """Create a stake size.
+
+        Args:
+            amount: Currency amount, ``>= 0``.
+            fraction: Bankroll fraction in ``[0, 1]``.
+
+        Raises:
+            ValueError: If both or neither are given, or a value is out of
+                range.
+        """
+        if (amount is None) == (fraction is None):
+            raise ValueError("Pass exactly one of amount= or fraction=")
+        if amount is not None and amount < 0:
+            raise ValueError("amount must be non-negative")
+        if fraction is not None and not 0 <= fraction <= 1:
+            raise ValueError("fraction must be in [0, 1]")
+        self.amount = amount
+        self.fraction = fraction
+
+    @classmethod
+    def from_arguments(
+        cls,
+        owner: str,
+        stake: Optional[float] = None,
+        amount: Optional[float] = None,
+        fraction: Optional[float] = None,
+        default_amount: Optional[float] = None,
+        stacklevel: int = 3,
+    ) -> "StakeSize":
+        """Build a stake size from a strategy's constructor arguments.
+
+        Args:
+            owner: Strategy name for messages.
+            stake: Legacy argument: below 1 is a fraction, else an amount.
+                Emits a ``DeprecationWarning``.
+            amount: Explicit amount.
+            fraction: Explicit fraction.
+            default_amount: Used when nothing is given; ``None`` makes a
+                size mandatory.
+            stacklevel: Warning stack level so it points at user code.
+
+        Returns:
+            The resolved stake size.
+
+        Raises:
+            ValueError: If more than one argument is given, a mandatory
+                size is missing, or a value is out of range.
+        """
+        if sum(value is not None for value in (stake, amount, fraction)) > 1:
+            raise ValueError(f"{owner}: pass only one of stake=, amount=, fraction=")
+        if stake is not None:
+            if stake < 0:
+                raise ValueError("stake must be non-negative")
+            warnings.warn(
+                f"{owner}(stake={stake!r}) is ambiguous: values below 1 are a "
+                "bankroll fraction, 1 and above a currency amount. Use "
+                "amount=... or fraction=... instead.",
+                DeprecationWarning,
+                stacklevel=stacklevel,
+            )
+            return cls(fraction=stake) if stake < 1 else cls(amount=stake)
+        if amount is None and fraction is None:
+            if default_amount is None:
+                raise ValueError(f"{owner} needs amount=... or fraction=...")
+            return cls(amount=default_amount)
+        return cls(amount=amount, fraction=fraction)
+
+    def resolve(self, bankroll: float) -> float:
+        """Stake for the given current bankroll."""
+        if self.fraction is not None:
+            return bankroll * self.fraction
+        return min(self.amount, bankroll)
+
+    @property
+    def value(self) -> float:
+        """The configured number: the amount or the fraction."""
+        return self.amount if self.amount is not None else self.fraction
+
+    def __str__(self) -> str:
+        if self.fraction is not None:
+            return f"{self.fraction:.2%} of current bankroll"
+        return f"${self.amount:.2f}"
 
 
 class BaseStrategy(ABC):
@@ -84,29 +196,42 @@ class BaseStrategy(ABC):
 
 
 class FixedStake(BaseStrategy):
-    """Flat dollar stake or constant fraction of the current bankroll.
+    """Flat amount or constant fraction of the current bankroll.
 
-    - If ``stake < 1``, it is a fraction of the *current* bankroll
-      (e.g. ``0.01`` = 1% of current bankroll on each bet).
-    - If ``stake >= 1``, it is an absolute currency amount, capped at the
+    - ``FixedStake(amount=10)``: 10 currency units per bet, capped at the
       current bankroll.
+    - ``FixedStake(fraction=0.02)``: 2% of the *current* bankroll per bet.
+    - ``FixedStake(10)`` / ``FixedStake(0.02)``: legacy form, still
+      supported; below 1 is a fraction, 1 and above an amount. Warns.
 
     Attributes:
-        stake: Absolute amount (if >= 1) or bankroll fraction (if < 1).
+        size: The ``StakeSize``.
+        stake: The configured number (amount or fraction), kept for
+            backward compatibility.
     """
 
-    def __init__(self, stake: float):
+    def __init__(
+        self,
+        stake: Optional[float] = None,
+        *,
+        amount: Optional[float] = None,
+        fraction: Optional[float] = None,
+    ):
         """Initialize the strategy.
 
         Args:
-            stake: Absolute amount (>= 1) or current-bankroll fraction (< 1).
+            stake: Legacy size: fraction if below 1, else amount.
+            amount: Currency amount per bet.
+            fraction: Share of the current bankroll per bet.
 
         Raises:
-            ValueError: If ``stake`` is negative.
+            ValueError: If no size or more than one is given, or a value
+                is negative or out of range.
         """
-        if stake < 0:
-            raise ValueError("stake must be non-negative")
-        self.stake = stake
+        self.size = StakeSize.from_arguments(
+            "FixedStake", stake=stake, amount=amount, fraction=fraction
+        )
+        self.stake = self.size.value
 
     def calculate_stake(
         self,
@@ -124,11 +249,9 @@ class FixedStake(BaseStrategy):
             **kwargs: Unused.
 
         Returns:
-            Fraction of current bankroll, or min(absolute stake, bankroll).
+            Fraction of current bankroll, or min(amount, bankroll).
         """
-        if self.stake < 1:
-            return bankroll * self.stake
-        return min(self.stake, bankroll)
+        return self.size.resolve(bankroll)
 
     def select_bet(
         self,
@@ -183,12 +306,7 @@ class FixedStake(BaseStrategy):
         return stake, bet_on, {}
 
     def __str__(self) -> str:
-        if self.stake < 1:
-            return (
-                f"Fixed Stake Strategy "
-                f"({self.stake:.2%} of current bankroll)"
-            )
-        return f"Fixed Stake Strategy (${self.stake:.2f})"
+        return f"Fixed Stake Strategy ({self.size})"
 
 
 class KellyCriterion(BaseStrategy):
@@ -409,39 +527,53 @@ class ValueBet(BaseStrategy):
     """Bet only when expected value exceeds ``min_ev``.
 
     EV of an outcome is ``p * odds - 1``. Among outcomes with EV strictly
-    greater than ``min_ev``, the highest EV is selected. Stake follows
-    FixedStake rules (absolute if ``stake >= 1``, else a fraction of
-    current bankroll).
+    greater than ``min_ev``, the highest EV is selected. The stake is an
+    ``amount=`` or a ``fraction=`` of the current bankroll, as in
+    FixedStake; the default is an amount of 1.
 
     Requires ``model_probs``. Without them the stake is 0, so this is not
     a valid bookie benchmark.
 
     Example:
-        ``ValueBet(min_ev=0.05, stake=10)`` stakes $10 on the highest-EV
+        ``ValueBet(min_ev=0.05, amount=10)`` stakes 10 on the highest-EV
         outcome when ``p * odds - 1 > 0.05``.
 
     Attributes:
         min_ev: Minimum expected value to place a bet.
-        stake: Absolute amount (>= 1) or bankroll fraction (< 1).
+        size: The ``StakeSize``.
+        stake: The configured number (amount or fraction), kept for
+            backward compatibility.
         requires_probabilities: Always ``True``.
     """
 
     requires_probabilities = True
 
-    def __init__(self, min_ev: float = 0.0, stake: float = 1.0):
+    def __init__(
+        self,
+        min_ev: float = 0.0,
+        stake: Optional[float] = None,
+        *,
+        amount: Optional[float] = None,
+        fraction: Optional[float] = None,
+    ):
         """Initialize the value filter and stake size.
 
         Args:
             min_ev: Skip outcomes with EV at or below this threshold.
-            stake: Absolute amount (>= 1) or current-bankroll fraction (< 1).
+            stake: Legacy size: fraction if below 1, else amount. Warns.
+            amount: Currency amount per bet.
+            fraction: Share of the current bankroll per bet.
 
         Raises:
-            ValueError: If ``stake`` is negative.
+            ValueError: If more than one size is given or a value is out
+                of range.
         """
-        if stake < 0:
-            raise ValueError("stake must be non-negative")
+        self.size = StakeSize.from_arguments(
+            "ValueBet", stake=stake, amount=amount, fraction=fraction,
+            default_amount=1.0,
+        )
         self.min_ev = min_ev
-        self.stake = stake
+        self.stake = self.size.value
 
     def calculate_stake(
         self,
@@ -463,9 +595,7 @@ class ValueBet(BaseStrategy):
         """
         if self.select_bet(odds, model_probs, **kwargs) == -1:
             return 0.0
-        if self.stake < 1:
-            return bankroll * self.stake
-        return min(self.stake, bankroll)
+        return self.size.resolve(bankroll)
 
     def select_bet(
         self,
@@ -682,7 +812,8 @@ class OddsFilter(BaseStrategy):
     """Restrict an inner strategy to outcomes inside an odds band.
 
     Only outcomes with ``min_odds <= odds <= max_odds`` are passed to
-    ``inner``. Default inner strategy is ``FixedStake(stake)``.
+    ``inner``. Without ``inner``, a ``FixedStake`` with the given size is
+    used (amount 1 by default).
 
     Example:
         ``OddsFilter(min_odds=1.5, inner=UnitStake(90, "loss"))`` skips
@@ -699,19 +830,30 @@ class OddsFilter(BaseStrategy):
         min_odds: float = 1.01,
         max_odds: float = float("inf"),
         inner: Optional[BaseStrategy] = None,
-        stake: float = 1.0,
+        stake: Optional[float] = None,
+        *,
+        amount: Optional[float] = None,
+        fraction: Optional[float] = None,
     ):
         """Initialize the odds band and inner strategy.
 
         Args:
             min_odds: Inclusive minimum decimal odds.
             max_odds: Inclusive maximum decimal odds.
-            inner: Wrapped strategy. Defaults to ``FixedStake(stake)``.
-            stake: Used only when ``inner`` is omitted.
+            inner: Wrapped strategy. Defaults to a ``FixedStake``.
+            stake: Legacy size for the default inner strategy. Warns.
+            amount: Amount for the default inner strategy.
+            fraction: Bankroll fraction for the default inner strategy.
         """
         self.min_odds = min_odds
         self.max_odds = max_odds
-        self.inner = inner if inner is not None else FixedStake(stake)
+        if inner is None:
+            size = StakeSize.from_arguments(
+                "OddsFilter", stake=stake, amount=amount, fraction=fraction,
+                default_amount=1.0,
+            )
+            inner = FixedStake(amount=size.amount, fraction=size.fraction)
+        self.inner = inner
 
     @property
     def requires_probabilities(self) -> bool:
@@ -851,10 +993,242 @@ class OddsFilter(BaseStrategy):
         )
 
 
+class RiskLimits(BaseStrategy):
+    """Cap and pause an inner strategy using the run's ``BetHistory``.
+
+    The inner strategy picks the outcome and a stake; the limits then
+    shrink or block it. Rules, in order:
+
+    1. ``stop_at_drawdown``: no more bets once the bankroll is this far
+       below its peak (``0.3`` = 30%). Permanent for the run: without bets
+       the bankroll cannot recover.
+    2. ``pause_after_losses``: no more bets for the rest of the calendar
+       day after this many consecutive losses on that day.
+    3. ``max_stake_fraction``: stake at most this share of the current
+       bankroll.
+    4. ``max_stake``: stake at most this amount.
+    5. ``max_daily_fraction``: total stake per calendar day at most this
+       share of the bankroll before the day's first bet.
+    6. ``min_stake``: skip bets whose stake is below this amount, e.g. a
+       bookmaker minimum.
+
+    The rule that changed or blocked a bet is stored as ``risk_limit``
+    (results column ``bt_risk_limit``; empty when no rule applied). Rules
+    1, 2, and 5 need the history and date the backtest passes in; when
+    called without them (e.g. the bookie benchmark) only the stateless
+    rules 3, 4, and 6 apply.
+
+    Example:
+        ``RiskLimits(KellyCriterion(), max_stake_fraction=0.05,
+        stop_at_drawdown=0.3)`` bets Kelly, at most 5% per bet, and stops
+        after a 30% drawdown.
+
+    Attributes:
+        inner: Wrapped strategy.
+    """
+
+    def __init__(
+        self,
+        inner: BaseStrategy,
+        *,
+        max_stake_fraction: Optional[float] = None,
+        max_stake: Optional[float] = None,
+        max_daily_fraction: Optional[float] = None,
+        min_stake: Optional[float] = None,
+        stop_at_drawdown: Optional[float] = None,
+        pause_after_losses: Optional[int] = None,
+    ):
+        """Wrap a strategy with risk limits; every limit is optional.
+
+        Args:
+            inner: Strategy that selects and sizes the bet.
+            max_stake_fraction: Per-bet cap as a bankroll share, ``(0, 1]``.
+            max_stake: Per-bet cap as an amount, ``> 0``.
+            max_daily_fraction: Daily stake cap as a share of the bankroll
+                at the start of the day, ``(0, 1]``.
+            min_stake: Minimum amount; smaller bets are skipped, ``> 0``.
+            stop_at_drawdown: Drawdown that ends betting, ``(0, 1]``.
+            pause_after_losses: Same-day losing streak that pauses betting
+                until the next day, ``>= 1``.
+
+        Raises:
+            ValueError: If a limit is out of range.
+        """
+        for name, value in (
+            ("max_stake_fraction", max_stake_fraction),
+            ("max_daily_fraction", max_daily_fraction),
+            ("stop_at_drawdown", stop_at_drawdown),
+        ):
+            if value is not None and not 0 < value <= 1:
+                raise ValueError(f"{name} must be in (0, 1]")
+        for name, value in (("max_stake", max_stake), ("min_stake", min_stake)):
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be positive")
+        if pause_after_losses is not None and pause_after_losses < 1:
+            raise ValueError("pause_after_losses must be at least 1")
+        self.inner = inner
+        self.max_stake_fraction = max_stake_fraction
+        self.max_stake = max_stake
+        self.max_daily_fraction = max_daily_fraction
+        self.min_stake = min_stake
+        self.stop_at_drawdown = stop_at_drawdown
+        self.pause_after_losses = pause_after_losses
+
+    @property
+    def requires_probabilities(self) -> bool:
+        """True when the inner strategy requires model probabilities."""
+        return bool(getattr(self.inner, "requires_probabilities", False))
+
+    def apply_limits(
+        self,
+        stake: float,
+        bankroll: float,
+        history: Optional[BetHistory] = None,
+        date: Any = None,
+    ) -> Tuple[float, Optional[str]]:
+        """Shrink or block a proposed stake.
+
+        Args:
+            stake: Stake proposed by the inner strategy.
+            bankroll: Current bankroll.
+            history: Settled bets of this run, if available.
+            date: Date of the current match, if available.
+
+        Returns:
+            ``(stake, rule)``: the allowed stake (0 to skip) and the name of
+            the last rule that changed it, or None.
+
+        Example:
+            ``max_stake=50``, proposed 80 → ``(50, "max_stake")``.
+        """
+        if history is not None:
+            if (
+                self.stop_at_drawdown is not None
+                and history.drawdown >= self.stop_at_drawdown
+            ):
+                return 0.0, "stop_at_drawdown"
+            if (
+                self.pause_after_losses is not None
+                and date is not None
+                and history.losing_streak_on(date) >= self.pause_after_losses
+            ):
+                return 0.0, "pause_after_losses"
+
+        rule = None
+        if (
+            self.max_stake_fraction is not None
+            and stake > bankroll * self.max_stake_fraction
+        ):
+            stake, rule = bankroll * self.max_stake_fraction, "max_stake_fraction"
+        if self.max_stake is not None and stake > self.max_stake:
+            stake, rule = self.max_stake, "max_stake"
+        if (
+            self.max_daily_fraction is not None
+            and history is not None
+            and date is not None
+        ):
+            allowed = (
+                history.bankroll_at_start_of(date) * self.max_daily_fraction
+                - history.staked_on(date)
+            )
+            if stake > allowed:
+                stake, rule = max(allowed, 0.0), "max_daily_fraction"
+        if self.min_stake is not None and stake < self.min_stake:
+            return 0.0, "min_stake"
+        if stake <= 0:
+            return 0.0, rule
+        return stake, rule
+
+    def calculate_stake(
+        self,
+        odds: List[float],
+        bankroll: float,
+        model_probs: Optional[List[float]] = None,
+        **kwargs: Any,
+    ) -> float:
+        """Inner stake after the limits.
+
+        Args:
+            odds: Decimal odds for each outcome.
+            bankroll: Current bankroll.
+            model_probs: Passed to the inner strategy.
+            **kwargs: ``history`` and ``date`` are used here and passed on.
+
+        Returns:
+            Limited stake, 0 to skip.
+        """
+        stake = self.inner.calculate_stake(
+            odds, bankroll, model_probs=model_probs, **kwargs
+        )
+        if stake <= 0:
+            return 0.0
+        limited, _ = self.apply_limits(
+            stake, bankroll, kwargs.get("history"), kwargs.get("date")
+        )
+        return limited
+
+    def select_bet(
+        self,
+        odds: List[float],
+        model_probs: Optional[List[float]] = None,
+        prediction: Optional[int] = None,
+        **kwargs: Any,
+    ) -> int:
+        """Outcome chosen by the inner strategy."""
+        return self.inner.select_bet(odds, model_probs, prediction, **kwargs)
+
+    def get_bet_details(
+        self,
+        odds: List[float],
+        bankroll: float,
+        model_probs: Optional[List[float]] = None,
+        prediction: Optional[int] = None,
+        **kwargs: Any,
+    ) -> Tuple[float, int, Dict[str, Any]]:
+        """Inner bet details with the limits applied.
+
+        Args:
+            odds: Decimal odds for each outcome.
+            bankroll: Current bankroll.
+            model_probs: Passed to the inner strategy.
+            prediction: Passed to the inner strategy.
+            **kwargs: ``history`` and ``date`` are used here and passed on,
+                so wrappers can be nested.
+
+        Returns:
+            ``(stake, bet_on, info)`` with ``info["risk_limit"]`` set.
+        """
+        stake, bet_on, info = self.inner.get_bet_details(
+            odds, bankroll, model_probs, prediction, **kwargs
+        )
+        info = {**info, "risk_limit": None}
+        if bet_on == -1 or stake <= 0:
+            return 0.0, -1, info
+        limited, rule = self.apply_limits(
+            stake, bankroll, kwargs.get("history"), kwargs.get("date")
+        )
+        info["risk_limit"] = rule
+        if limited <= 0:
+            return 0.0, -1, info
+        return limited, bet_on, info
+
+    def __str__(self) -> str:
+        limits = {
+            "max_stake_fraction": self.max_stake_fraction,
+            "max_stake": self.max_stake,
+            "max_daily_fraction": self.max_daily_fraction,
+            "min_stake": self.min_stake,
+            "stop_at_drawdown": self.stop_at_drawdown,
+            "pause_after_losses": self.pause_after_losses,
+        }
+        active = ", ".join(f"{k}={v}" for k, v in limits.items() if v is not None)
+        return f"RiskLimits ({active or 'no limits'}, inner={self.inner})"
+
+
 def get_default_strategy() -> FixedStake:
     """Return the default strategy: 1% of current bankroll.
 
     Returns:
-        ``FixedStake(0.01)``.
+        ``FixedStake(fraction=0.01)``.
     """
-    return FixedStake(0.01)
+    return FixedStake(fraction=0.01)

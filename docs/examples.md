@@ -27,7 +27,7 @@ backtest = btb.PredictionBacktest(
     outcome_column="actual_winner",
     prediction_column="model_predictions",
     initial_bankroll=1000,
-    strategy=btb.FixedStake(stake=10),  # 10 units on the predicted team
+    strategy=btb.FixedStake(amount=10),  # 10 units on the predicted team
 )
 backtest.run()
 
@@ -120,7 +120,7 @@ backtest = btb.PredictionBacktest(
     model_prob_columns=["prob_a", "prob_b"],
     closing_odds_columns=["close_a", "close_b"],
     margin_method="power",
-    strategy=btb.ValueBet(min_ev=0.03, stake=0.01),  # 1% of the bankroll on value bets
+    strategy=btb.ValueBet(min_ev=0.03, fraction=0.01),  # 1% of the bankroll on value bets
 )
 backtest.run()
 

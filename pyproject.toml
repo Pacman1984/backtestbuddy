@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "backtestbuddy"
-version = "0.1.13"
+version = "0.2.0"
 description = "Sports-betting backtesting with bankroll simulation and risk metrics"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -31,12 +31,12 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
-# Core dependencies - using compatible versions without build requirements
+# Core dependencies. Floors are the oldest versions the test suite passes with
+# (checked with uv --resolution lowest-direct). nbformat is not imported
+# directly; Plotly needs it to show figures in Jupyter.
 dependencies = [
     "numpy>=1.26.0",
     "pandas>=1.3.0",
-    "matplotlib>=3.5.0",
-    "scipy>=1.7.0",
     "plotly>=5.0.0",
     "scikit-learn>=1.0.0",
     "nbformat>=5.0.0",

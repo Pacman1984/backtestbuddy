@@ -2,7 +2,9 @@
 
 All notable changes to BacktestBuddy. Newest first.
 
-## Unreleased
+## Version 0.2.0 (2026-10-22)
+
+Upgrade notes: metric keys for Brier, Log Loss, and ECE changed, and several metric values changed (see Breaking Changes). Code that reads `calculate_metrics()` by key needs updating.
 
 **New features:**
 - **Margin removal**: `remove_margin(odds, method=...)` with `multiplicative`, `additive`, `power`, and `shin` (new `backtestbuddy.odds` module).
@@ -24,6 +26,18 @@ All notable changes to BacktestBuddy. Newest first.
 
 **Testing:**
 - `tests/integration/test_metrics_reference.py` cross-checks every metric against a naive reference implementation on 20 randomized backtests.
+- Every Python example in README and docs runs as a test.
+- GitHub Actions runs the suite on Python 3.9 to 3.13, once more with the oldest allowed dependencies, and builds the docs.
+
+**Fixes:**
+- Sharpe, Sortino, and Calmar no longer turn NaN on pandas 1.3 when a period contains a total loss (`-inf + 0` summed to NaN there).
+
+**Packaging:**
+- Removed the unused direct dependencies `matplotlib` and `scipy`. Installs no longer pull in matplotlib and its dependencies; scipy still arrives through scikit-learn.
+- Removed the stale `setup.py`, `setup.cfg`, and `requirements.txt`; `pyproject.toml` is the only package definition.
+
+**Docs:**
+- All pages checked against the code and rewritten for readability; six broken examples fixed. New Odds Module page, a step-by-step Getting Started, and this changelog page.
 
 ## Version 0.1.13 (2026-08-26)
 

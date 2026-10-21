@@ -26,6 +26,19 @@ jobs:
       - name: Run tests
         run: uv run --python ${{ matrix.python-version }} --extra test pytest
 
+  oldest-deps:
+    # Installs the lowest versions pyproject.toml allows, so the floors stay honest.
+    name: Oldest dependencies (Python 3.9)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Run tests on minimum versions
+        # -p no:cov: the oldest pytest-cov is irrelevant to the package and can fail to import
+        run: uv run --python 3.9 --resolution lowest-direct --extra test pytest -p no:cov
+
   docs:
     name: Docs build
     runs-on: ubuntu-latest

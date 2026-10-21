@@ -1,4 +1,4 @@
-__version__ = "0.1.13"
+__version__ = "0.2.0"
 
 from .backtest.sport_backtest import BaseBacktest, ModelBacktest, PredictionBacktest
 from .strategies.sport_strategies import (

@@ -1,6 +1,46 @@
 # Metrics Module
 
-The Metrics Module in BacktestBuddy provides a comprehensive set of performance metrics to evaluate your betting strategies. This document describes each metric, how it's calculated, and which columns from the detailed results dataframe are used. Right now, the only module that implements these metrics is the `sport_metrics.py` file.
+`backtest.calculate_metrics()` (or `calculate_all_metrics(detailed_results, margin_method="multiplicative")` from `backtestbuddy.metrics.sport_metrics`) returns one dictionary with every metric below. This page lists them first in a quick reference, then explains each one with its formula and the results columns it reads.
+
+A **placed bet** is a row with `bt_stake > 0` and `bt_bet_on != -1`. Values that cannot be computed, e.g. CLV without closing odds, are `nan` and appear as "—" in the plot table.
+
+## Quick reference
+
+| Key | Meaning | Better when |
+|---|---|---|
+| `Backtest Start Date`, `End Date`, `Duration` | First date, last date, and the span between | |
+| `ROI [%]` | Bankroll growth from start to end | higher |
+| `Yield [%]` | Profit per unit staked | higher |
+| `Expected Yield [%]` | Yield your model expected on the bets placed | higher |
+| `Avg. ROI per Bet [%] (micro)` | Mean of each bet's profit / stake | higher |
+| `Avg. ROI per Year [%] (micro)` | Mean calendar-year ROI, weighted by days covered | higher |
+| `Avg. ROI per Year [%] (macro)` | Total ROI / years (linear) | higher |
+| `CAGR [%]` | Compound annual growth rate of the bankroll | higher |
+| `Risk-Adjusted Annual ROI [-]` | Annual ROI (macro) / max drawdown | higher |
+| `Total Profit [$]` | Sum of all profits | higher |
+| `Expected Profit [$]` | Profit your model expected on the bets placed | higher |
+| `Realized vs Expected Profit [$]` | Actual minus expected profit (luck plus miscalibration) | near 0 |
+| `Bankroll Final / Peak / Valley [$]` | Last, highest, and lowest bankroll | higher |
+| `Sharpe Ratio (365.25 / 252 / obs/year) [-]` | Annualized return / volatility, three annualization scales | higher |
+| `Sortino Ratio (365.25 / 252 / obs/year) [-]` | Like Sharpe, but only downside volatility counts | higher |
+| `Calmar Ratio [-]` | Annual growth / max drawdown of the return curve | higher |
+| `Max Drawdown [%]` | Worst fall from a bankroll peak | lower |
+| `Max. Drawdown Duration [bets]` | Bets from that peak to the trough | lower |
+| `Win Rate [%]` | Share of placed bets that won | context |
+| `Average Odds [-]` | Mean odds of placed bets | context |
+| `Average Implied Prob [-]` | Mean `1 / odds` of placed bets, margin included | context |
+| `Average Overround [%]` | Mean bookmaker margin of the markets bet | lower |
+| `Brier Score (placed / all games) [-]` | Squared error of model probabilities | lower |
+| `Log Loss (placed / all games) [-]` | Log loss of model probabilities | lower |
+| `ECE (placed / all games) [-]` | Calibration error of model probabilities | lower |
+| `Brier Score / Log Loss (market, all games) [-]` | Same scores for the margin-free odds; the baseline to beat | (compare) |
+| `CLV [%]` | Mean of odds taken / closing odds − 1 | higher |
+| `CLV (no-vig) [%]` | Expected return against the margin-free closing line | higher |
+| `Beat Closing Line [%]` | Share of bets taken above the closing odds | higher |
+| `Highest Winning / Losing Odds [-]` | Largest odds that won / lost | context |
+| `Average Stake [$]` | Mean stake of placed bets | context |
+| `Best Bet / Worst Bet [$]` | Largest single profit / loss | context |
+| `Total Bets`, `Total Opportunities`, `Bet Frequency [%]` | Bets placed, rows, and their ratio | context |
 
 ## Overall Sport Performance Metrics
 
@@ -26,11 +66,26 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
 - Columns used: `bt_profit`, `bt_stake`, `bt_bet_on`
 - Note: With unequal stakes, Yield differs from Avg. ROI per Bet (micro). Yield is the per-bet return measure; the former `Avg. ROI per Bet [%] (macro)` (bankroll ROI / number of bets) was removed from `calculate_all_metrics` because bankroll ROI compounds across bets.
 
+### Avg. ROI per Bet (micro)
+
+- Description: Mean of each placed bet's own return, so every bet counts equally regardless of stake.
+- Formula: $\overline{profit_i / stake_i} \times 100\%$
+- Columns used: `bt_profit`, `bt_stake`, `bt_bet_on`
+- Example: stakes 100, profits 20, −50, 30 → mean of 20%, −50%, 30% = 0%.
+
 ### Avg. ROI per Year (micro / macro)
 
 - Micro: duration-weighted mean of calendar-year ROIs. Each year's ROI is `(year_end / year_start - 1) * 100`, weighted by the days that year covers (first to last row in the year, inclusive). A two-week partial year therefore does not count as much as a full year.
 - Macro: total ROI divided by the backtest length in years (linear, not compounded; see CAGR for the geometric rate).
 - Columns used: `bt_starting_bankroll`, `bt_ending_bankroll`, `bt_date_column`
+
+### CAGR (Compound Annual Growth Rate)
+
+- Description: The constant yearly growth rate that turns the starting bankroll into the final bankroll.
+- Formula: $CAGR = \left(\frac{Final\ Bankroll}{Initial\ Bankroll}\right)^{1/years} - 1$, in percent, with $years = (\max date - \min date).days / 365.25$
+- Edge cases: `0.0` for an empty frame or a zero-length span; `-100.0` if the bankroll ends at 0
+- Columns used: `bt_starting_bankroll` (first row), `bt_ending_bankroll` (last row), `bt_date_column`
+- Example: 1000 → 1210 over two years → 10%.
 
 ### Expected Yield / Expected Profit / Realized vs Expected Profit
 
@@ -121,13 +176,7 @@ The Metrics Module in BacktestBuddy provides a comprehensive set of performance 
      avg_yearly_roi_pct = calculate_avg_roi_per_year_macro(detailed_results)
      ```
   2. Convert to decimal: `avg_yearly_roi = avg_yearly_roi_pct / 100.0`
-  3. Calculate maximum drawdown:
-     ```python
-     equity_curve = detailed_results['bt_ending_bankroll']
-     peak = equity_curve.cummax()
-     drawdown = (equity_curve - peak) / peak
-     max_drawdown = drawdown.min()
-     ```
+  3. Maximum drawdown with `calculate_max_drawdown(detailed_results)`: the bankroll curve starting from the opening bankroll, as a negative decimal (see [Max Drawdown](#max-drawdown)).
   4. Risk-Adjusted Annual ROI:
      - If `max_drawdown == 0` and yearly ROI > 0: `float('inf')`
      - If `max_drawdown == 0` and yearly ROI is not positive: `0.0`
@@ -171,7 +220,7 @@ This is not the same as Calmar's return-curve drawdown.
 ### Average Odds
 
 - Description: The average odds of all bets placed.
-- Calculation: `detailed_results['bt_odds'].mean()`
+- Calculation: mean of `bt_odds` over placed bets
 - Column used: `bt_odds`
 
 ### Highest Winning Odds
@@ -195,13 +244,13 @@ This is not the same as Calmar's return-curve drawdown.
 ### Best Bet
 
 - Description: The highest profit achieved from a single bet.
-- Calculation: `detailed_results['bt_profit'].max()`
+- Calculation: maximum `bt_profit` over placed bets
 - Column used: `bt_profit`
 
 ### Worst Bet
 
 - Description: The largest loss incurred from a single bet.
-- Calculation: `detailed_results['bt_profit'].min()`
+- Calculation: minimum `bt_profit` over placed bets
 - Column used: `bt_profit`
 
 ## Additional Information

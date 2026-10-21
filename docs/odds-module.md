@@ -5,11 +5,16 @@ The `odds` module converts bookmaker odds into fair probabilities. It does not d
 ## `remove_margin`
 
 ```python
+import pandas as pd
 from backtestbuddy import remove_margin
 
 remove_margin([1.9, 1.9])                       # array([0.5, 0.5])
 remove_margin([1.2, 4.5], method="shin")        # favourite gets more than multiplicative
-remove_margin(df[["odds_home", "odds_draw", "odds_away"]].to_numpy(), method="power")
+
+# Many markets at once, e.g. the 1X2 columns of a DataFrame
+df = pd.DataFrame({"odds_home": [2.10, 1.55], "odds_draw": [3.40, 4.00], "odds_away": [3.60, 6.50]})
+fair = remove_margin(df[["odds_home", "odds_draw", "odds_away"]].to_numpy(), method="power")
+df[["p_home", "p_draw", "p_away"]] = fair
 ```
 
 - Input: decimal odds of one market, shape `(n_outcomes,)`, or of many markets, shape `(n_markets, n_outcomes)`. At least two outcomes per market.

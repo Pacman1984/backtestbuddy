@@ -1,88 +1,40 @@
-# BacktestBuddy Documentation
+# BacktestBuddy
 
-Welcome to the official documentation for BacktestBuddy!
+BacktestBuddy backtests sports-betting strategies in Python. You give it a pandas DataFrame of historical matches with odds, results, and your model output; it simulates the bankroll bet by bet and reports risk metrics and interactive charts.
 
-> **Note:** The following features are currently under development and not yet implemented:
+It works with any data source. Every input is a column name you pass in, so the same code runs on football, tennis, or any other market with decimal odds.
 
-BacktestBuddy is an open-source Python package for backtesting various trading and betting strategies, including:
+## What you can do
 
-- Sports betting (✅ Done)
-- Stocks trading (🏗️ In progress)
-- Cryptocurrencies trading (🔮 Planned)
+- **Backtest predictions you already have** (`PredictionBacktest`) or **train a model walk-forward** (`ModelBacktest`).
+- **Size bets** with fixed stakes, Kelly, value betting, unit plans, or an odds-band filter.
+- **Measure results**: ROI, Yield, CAGR, Sharpe, Sortino, Calmar, drawdowns, calibration of your probabilities, and a market baseline.
+- **Check your prices** with closing line value (CLV) against any later or sharper line.
+- **Remove the bookmaker margin** with four methods.
+- **Stress-test** the strategy with worse odds.
+- **Plot** the bankroll, drawdown, calibration, and odds distribution.
 
-## Features
+## Where to start
 
-- Flexible backtesting framework for different types of strategies
-- Support for sports betting, stock trading, and cryptocurrency trading
-- Easy-to-use API for implementing custom strategies
-- Comprehensive performance metrics and visualization tools
-
-## Table of Contents
-
-- [Getting Started](getting-started.md)
-- [Core Concepts](core-concepts.md)
-- [Backtest Module](backtest-module.md)
-- [Metrics Module](metrics-module.md)
-- [Strategies Module](strategies-module.md)
-- [Plots Module](plots-module.md)
-- [Examples](examples.md)
+| If you want to… | Read |
+|---|---|
+| Run a first backtest on your own data | [Getting Started](getting-started.md) |
+| Understand how the simulation works | [Core Concepts](core-concepts.md) |
+| Look up a class, parameter, or results column | [Backtest Module](backtest-module.md) |
+| Choose or write a staking strategy | [Strategies Module](strategies-module.md) |
+| Know exactly how a metric is computed | [Metrics Module](metrics-module.md) |
+| Remove the margin from odds | [Odds Module](odds-module.md) |
+| Customize or export charts | [Plots Module](plots-module.md) |
+| Copy a complete script | [Examples](examples.md) |
 
 ## Installation
-
-To install BacktestBuddy, run the following command:
 
 ```bash
 pip install backtestbuddy
 ```
 
-## Quick Example
+Requires Python 3.9 or newer.
 
-Here's a simple example of how to use BacktestBuddy for a sports betting backtest:
+## Scope
 
-```python
-from backtestbuddy.strategies.sport_strategies import FixedStake
-from backtestbuddy.backtest.sport_backtest import PredictionBacktest
-
-# Prepare your data
-
-data = ... # Your historical betting data
-
-# Define your strategy
-
-strategy = FixedStake(stake=10)
-
-# Create a backtest object
-backtest = PredictionBacktest(
-    data=data,
-    date_column='date',
-    odds_columns=['odds_team_a', 'odds_team_b'],
-    outcome_column='actual_winner',
-    prediction_column='model_predictions',
-    initial_bankroll=1000,
-    strategy=strategy,
-    model_prob_columns=['prob_team_a', 'prob_team_b'] # Needed for Kelly and ValueBet. Not needed for FixedStake or UnitStake.
-)
-
-# Run the backtest
-backtest.run()    
-
-# Show the detailed match results
-backtest.detailed_results
-# or
-bookie_results = backtest.get_detailed_results()
-bookie_results
-
-# Show Bookie Results
-bookie_results = backtest.get_bookie_results()
-bookie_results
-
-# Calculate Performance Metrics
-backtest.calculate_metrics()
-
-# Visualize the Backtest Results
-backtest.plot()
-
-# Visualize the Odds Distribution etc...
-backtest.plot_odds_distribution()
-
-```
+Sports betting is the supported use case. Stock and crypto backtests are ideas for the future, not features.

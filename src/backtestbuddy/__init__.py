@@ -1,11 +1,14 @@
 __version__ = "0.2.0"
 
 from .backtest.sport_backtest import BaseBacktest, ModelBacktest, PredictionBacktest
+from .strategies.history import BetHistory, SettledBet
 from .strategies.sport_strategies import (
     BaseStrategy,
     FixedStake,
     KellyCriterion,
     OddsFilter,
+    RiskLimits,
+    StakeSize,
     UnitStake,
     ValueBet,
 )
@@ -27,9 +30,13 @@ __all__ = [
     "ValueBet",
     "UnitStake",
     "OddsFilter",
+    "RiskLimits",
+    "StakeSize",
+    "BetHistory",
+    "SettledBet",
     "calculate_all_metrics",
     "remove_margin",
-"plot_backtest",
+    "plot_backtest",
     "plot_calibration",
     "plot_odds_histogram",
 ]

@@ -7,7 +7,7 @@ It works with any data source. Every input is a column name you pass in, so the 
 ## What you can do
 
 - **Backtest predictions you already have** (`PredictionBacktest`) or **train a model walk-forward** (`ModelBacktest`).
-- **Size bets** with fixed stakes, Kelly, value betting, unit plans, or an odds-band filter.
+- **Size bets** with fixed stakes, Kelly, value betting, unit plans, or an odds-band filter, and protect the bankroll with risk limits.
 - **Measure results**: ROI, Yield, CAGR, Sharpe, Sortino, Calmar, drawdowns, calibration of your probabilities, and a market baseline.
 - **Check your prices** with closing line value (CLV) against any later or sharper line.
 - **Remove the bookmaker margin** with four methods.

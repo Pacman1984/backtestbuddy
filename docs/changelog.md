@@ -2,6 +2,16 @@
 
 All notable changes to BacktestBuddy. Newest first.
 
+## Unreleased
+
+**New features:**
+- **Explicit stake sizes**: `FixedStake`, `ValueBet`, and `OddsFilter` take `amount=` (currency, values below 1 allowed) or `fraction=` (share of the current bankroll). The single `stake=` argument still works with its old rule (below 1 = fraction) but emits a `DeprecationWarning`, because `0.99` and `1.0` meant very different bets. New `StakeSize` class.
+- **`RiskLimits` wrapper**: `max_stake_fraction`, `max_stake`, `max_daily_fraction`, `min_stake`, `stop_at_drawdown`, `pause_after_losses` around any strategy. The rule that fired is reported in `bt_risk_limit`.
+- **`BetHistory` ledger**: every run records settled bets and passes the ledger to the strategy as `history=` with the match `date=`, so strategies can use memory (streaks, drawdown, daily totals) without their own state. Available after a run as `backtest.history`.
+
+**Docs:**
+- `BACKLOG.md` describes planned work, starting with the selector/sizer strategy toolkit (fully backward compatible).
+
 ## Version 0.2.0 (2026-10-22)
 
 Upgrade notes: metric keys for Brier, Log Loss, and ECE changed, and several metric values changed (see Breaking Changes). Code that reads `calculate_metrics()` by key needs updating.

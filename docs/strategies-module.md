@@ -41,6 +41,7 @@ This method combines `calculate_stake` and `select_bet` to provide complete bet 
 | `ValueBet` | **Yes** | Highest expected value above `min_ev` | Fixed amount or % of current bankroll |
 | `UnitStake` | No | Same as `FixedStake` | Unit-loss, unit-win, or unit-impact plan |
 | `OddsFilter` | Only if the inner strategy does | Inner strategy, among outcomes in the odds band | Inner strategy |
+| `RiskLimits` | Only if the inner strategy does | Inner strategy | Inner strategy, capped or paused by the limits |
 
 `PredictionBacktest` raises a `ValueError` if a strategy that needs probabilities gets no `model_prob_columns`.
 
@@ -48,11 +49,28 @@ This method combines `calculate_stake` and `select_bet` to provide complete bet 
 
 #### FixedStake
 
-The `FixedStake` class implements a fixed-stake strategy. It bets either a fixed dollar amount (`stake >= 1`, capped at current bankroll) or a fixed **percentage of the current bankroll** (`stake < 1`). This is constant-fraction sizing, not a freeze of the opening bankroll.
+The `FixedStake` class bets either a fixed amount or a fixed **share of the current bankroll** on every bet. Fraction sizing follows the bankroll as it grows or shrinks; it is not a freeze of the opening bankroll.
+
+```python
+import backtestbuddy as btb
+
+btb.FixedStake(amount=10)      # 10 currency units per bet, capped at the bankroll
+btb.FixedStake(fraction=0.02)  # 2% of the current bankroll per bet
+```
+
+##### Stake sizes: `amount=` or `fraction=`
+
+`FixedStake`, `ValueBet`, and `OddsFilter` (for its default inner strategy) take the size as one of:
+
+- `amount=`: currency units per bet, `>= 0`, capped at the current bankroll. Values below 1 are allowed (`amount=0.5` is half a unit).
+- `fraction=`: share of the current bankroll, in `[0, 1]`.
+
+Older code that passes a single `stake=` (or a positional number) keeps working: below 1 is read as a fraction, 1 and above as an amount. It emits a `DeprecationWarning`, because `stake=0.99` (99% of the bankroll) and `stake=1.0` (1 unit) are easy to mix up. Passing more than one of `stake=`, `amount=`, `fraction=` raises a `ValueError`.
 
 ##### Attributes (FixedStake)
 
-- `stake` (float): Absolute amount (>= 1) or current-bankroll fraction (< 1). Negative values raise a `ValueError`.
+- `size` (`StakeSize`): the configured `amount` or `fraction`.
+- `stake` (float): the configured number, kept for backward compatibility.
 
 ##### Methods (FixedStake)
 
@@ -95,7 +113,7 @@ Requires model probabilities. Bookie simulations call `calculate_stake` without 
 ##### Attributes (ValueBet)
 
 - `min_ev` (float): Minimum expected value to place a bet (default 0). Outcomes with EV at or below this skip.
-- `stake` (float): Absolute amount (>= 1) or current-bankroll fraction (< 1). Negative values raise a `ValueError`.
+- `size` (`StakeSize`): `amount=` or `fraction=` as for FixedStake; default `amount=1`.
 - `requires_probabilities` (bool): Always `True`. `PredictionBacktest` will raise if `model_prob_columns` is omitted.
 
 ##### Methods (ValueBet)
@@ -121,7 +139,7 @@ All three plans cap the stake at the current bankroll. Bookie path works (favori
 
 #### OddsFilter
 
-The `OddsFilter` class restricts an inner strategy to outcomes with `min_odds <= odds <= max_odds`. Default inner strategy is `FixedStake(stake)`. If no outcome is in the band, the bet is skipped (`bet_on = -1`, stake 0).
+The `OddsFilter` class restricts an inner strategy to outcomes with `min_odds <= odds <= max_odds`. Without `inner`, it uses `FixedStake` with the given `amount=` or `fraction=` (amount 1 by default). If no outcome is in the band, the bet is skipped (`bet_on = -1`, stake 0).
 
 This is “only consider in-band outcomes”, not “place the inner pick then skip if it is out of band”. Wrapping `FixedStake` without probabilities therefore bets the in-band favorite, not the overall favorite.
 
@@ -134,6 +152,87 @@ This is “only consider in-band outcomes”, not “place the inner pick then s
 - `inner` (`BaseStrategy`): Wrapped strategy.
 - `stake` (float): Used only when `inner` is omitted.
 
+#### RiskLimits
+
+`RiskLimits` wraps any strategy and shrinks or blocks its bets. Every limit is optional; combine as many as you need.
+
+```python
+import backtestbuddy as btb
+
+strategy = btb.RiskLimits(
+    btb.KellyCriterion(downscaling=0.5),
+    max_stake_fraction=0.05,   # at most 5% of the bankroll per bet
+    max_daily_fraction=0.15,   # at most 15% of the day's opening bankroll per day
+    pause_after_losses=3,      # stop for the day after 3 losses in a row that day
+    stop_at_drawdown=0.30,     # stop for good once 30% below the peak
+    min_stake=2,               # skip bets below the bookmaker minimum
+)
+```
+
+| Limit | Effect | Needs the history |
+|---|---|---|
+| `stop_at_drawdown` | No more bets once the bankroll is this far below its peak. Permanent for the run. | yes |
+| `pause_after_losses` | No more bets that calendar day after this many consecutive losses on that day. | yes |
+| `max_stake_fraction` | Caps each stake at this share of the current bankroll. | no |
+| `max_stake` | Caps each stake at this amount. | no |
+| `max_daily_fraction` | Caps the total stake per calendar day at this share of the bankroll before the day's first bet. | yes |
+| `min_stake` | Skips bets whose stake is below this amount. | no |
+
+The rules are applied in this order. The rule that changed or blocked a bet is written to the results column `bt_risk_limit`, so `backtest.detailed_results["bt_risk_limit"].value_counts()` shows how often each limit fired.
+
+Rules that need the history only work inside a backtest. The bookie benchmark calls the strategy without a history, so only the stateless caps apply there. Wrappers can be nested, e.g. `OddsFilter(min_odds=1.5, inner=RiskLimits(...))`.
+
+## Strategies with memory: `BetHistory`
+
+Every run keeps a ledger of settled bets, a `BetHistory`, and passes it to the strategy on each match together with the match date:
+
+```text
+strategy.get_bet_details(odds, bankroll, model_probs, prediction, history=<BetHistory>, date=<match date>)
+```
+
+A strategy that needs to remember anything reads the ledger instead of keeping its own state. The backtest creates a fresh ledger in every `run()`, so repeated runs such as `stress_test()` never leak state into each other. After a run, the ledger is available as `backtest.history`.
+
+| Query | Returns |
+|---|---|
+| `bankroll`, `peak_bankroll`, `drawdown` | Current bankroll, highest so far (including the start), fall below the peak as a fraction |
+| `n_bets`, `bets`, `last_bet` | Count, all settled bets, the most recent one (`SettledBet` with `date`, `stake`, `profit`, `bankroll_before`, `bankroll_after`, `won`) |
+| `losing_streak`, `losing_streak_on(date)` | Consecutive losses at the end, overall or within one day |
+| `staked_on(date)`, `profit_on(date)`, `bankroll_at_start_of(date)` | Per-calendar-day totals |
+
+Example: a flat stake that halves after two losses in a row.
+
+```python
+import numpy as np
+import pandas as pd
+import backtestbuddy as btb
+
+
+class HalveAfterLosses(btb.FixedStake):
+    """FixedStake that halves the stake while the last two bets lost."""
+
+    def get_bet_details(self, odds, bankroll, model_probs=None, prediction=None, history=None, **kwargs):
+        stake, bet_on, info = super().get_bet_details(odds, bankroll, model_probs, prediction)
+        if history is not None and history.losing_streak >= 2:
+            stake /= 2
+        return stake, bet_on, {"losing_streak": history.losing_streak if history else 0}
+
+
+rng = np.random.default_rng(5)
+n = 200
+data = pd.DataFrame({
+    "date": pd.date_range("2023-01-01", periods=n, freq="D"),
+    "odds_a": np.full(n, 1.9),
+    "odds_b": np.full(n, 1.9),
+    "winner": rng.integers(0, 2, n),
+    "prediction": np.zeros(n, dtype=int),
+})
+backtest = btb.PredictionBacktest(data, ["odds_a", "odds_b"], "winner", "date", "prediction",
+                                  strategy=HalveAfterLosses(amount=20))
+backtest.run()
+print(backtest.detailed_results[["bt_stake", "bt_win", "bt_losing_streak"]].head(8))
+print("Bets:", backtest.history.n_bets, "| peak:", backtest.history.peak_bankroll)
+```
+
 ## Utility Functions
 
 ### `get_default_strategy`
@@ -145,7 +244,7 @@ def get_default_strategy() -> FixedStake:
 Returns the default betting strategy.
 
 - **Returns:**
-  - `FixedStake`: 1% of the **current** bankroll (`FixedStake(0.01)`).
+  - `FixedStake`: 1% of the **current** bankroll (`FixedStake(fraction=0.01)`).
 
 ## Adding New Strategies
 
@@ -196,3 +295,4 @@ Rules the backtest relies on:
 - Return `bet_on = -1` and stake 0 to skip a match.
 - `select_bet` must accept `prediction` as the third positional argument.
 - Set `requires_probabilities = True` on the class if the strategy cannot work without model probabilities.
+- Keep `**kwargs` in `get_bet_details`: the backtest passes `history=` and `date=` (see [Strategies with memory](#strategies-with-memory-bethistory)). Read them if you need memory, ignore them otherwise.

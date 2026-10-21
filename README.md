@@ -11,7 +11,7 @@ Works with any data source: you pass a pandas DataFrame and tell BacktestBuddy w
 ## Features
 
 - **Two ways to backtest**: `PredictionBacktest` for predictions you already have, `ModelBacktest` to train an sklearn-style model walk-forward.
-- **Strategies**: fixed stake, Kelly criterion, value betting, unit staking, odds-band filter.
+- **Strategies**: fixed stake, Kelly criterion, value betting, unit staking, odds-band filter, and risk limits (stake caps, daily limits, loss pauses, drawdown stop).
 - **Metrics**: ROI, Yield, CAGR, Sharpe, Sortino, Calmar, drawdown, calibration (Brier, log loss, ECE), and a market baseline.
 - **Closing line value**: compare the odds you took with any later or sharper line.
 - **Margin removal**: multiplicative, additive, power, and Shin methods.

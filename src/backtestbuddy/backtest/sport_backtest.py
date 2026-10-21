@@ -14,6 +14,7 @@ from backtestbuddy.plots.sport_plots import (
     plot_calibration,
     plot_odds_histogram,
 )
+from backtestbuddy.strategies.history import BetHistory
 from backtestbuddy.strategies.sport_strategies import (
     BaseStrategy,
     FixedStake,
@@ -114,6 +115,7 @@ class BaseBacktest(ABC):
         self.cv_schema = cv_schema if cv_schema is not None else TimeSeriesSplit(n_splits=5)
         self.detailed_results: Optional[pd.DataFrame] = None
         self.bookie_results: Optional[pd.DataFrame] = None
+        self.history: Optional[BetHistory] = None
         self.metrics: Optional[Dict[str, Any]] = None
         self.model_prob_columns: Optional[List[str]] = None
         self.closing_odds_columns = closing_odds_columns
@@ -150,6 +152,19 @@ class BaseBacktest(ABC):
             return odds
         lowered = [odd * (1 - self.odds_haircut) for odd in odds]
         return [1.0 if odd < 1.0 else odd for odd in lowered]
+
+    @staticmethod
+    def _record_bet(history: BetHistory, result: Dict[str, Any]) -> None:
+        """Add a settled result row to the history if a bet was placed."""
+        if result['bt_stake'] > 0 and result['bt_bet_on'] != -1:
+            history.record(
+                result['bt_date_column'],
+                stake=result['bt_stake'],
+                profit=result['bt_profit'],
+                bankroll_before=result['bt_starting_bankroll'],
+                bankroll_after=result['bt_ending_bankroll'],
+                won=bool(result['bt_win']),
+            )
 
     def _closing_odds(self, row: Dict[str, Any]) -> Optional[List[float]]:
         """Closing odds of one data row, or None without closing columns."""
@@ -533,6 +548,8 @@ class ModelBacktest(BaseBacktest):
         bookie_results = []
         current_bankroll = self.initial_bankroll
         bookie_bankroll = self.initial_bankroll
+        # Fresh ledger per run, so repeated runs (stress_test) never share state
+        history = BetHistory(self.initial_bankroll)
 
         # Define feature columns, excluding date and outcome columns unless set explicitly
         feature_columns = self.feature_columns or [col for col in self.data.columns if col not in [self.date_column, self.outcome_column]]
@@ -576,12 +593,14 @@ class ModelBacktest(BaseBacktest):
                 # Convert probs to a list if it's not already
                 probs_list = probs.tolist() if isinstance(probs, np.ndarray) else list(probs)
                 
-                bet_details = self.strategy.get_bet_details(odds, current_bankroll, model_probs=probs_list, prediction=prediction)
+                bet_details = self.strategy.get_bet_details(odds, current_bankroll, model_probs=probs_list, prediction=prediction,
+                                                            history=history, date=records[i][self.date_column])
                 stake, bet_on, additional_info = bet_details
 
                 closing = self._closing_odds(records[i])
                 result = self._simulate_bet(fold, test_index[i], prediction, bet_on, actual_outcome, odds, current_bankroll, stake, model_probs=probs_list, closing_odds=closing, **additional_info)
                 current_bankroll = result['bt_ending_bankroll']
+                self._record_bet(history, result)
                 
                 # Add all original features to the result
                 result.update(records[i])
@@ -597,6 +616,7 @@ class ModelBacktest(BaseBacktest):
 
         self.detailed_results = pd.DataFrame(all_results)
         self.bookie_results = pd.DataFrame(bookie_results)
+        self.history = history
        
 
 
@@ -692,6 +712,8 @@ class PredictionBacktest(BaseBacktest):
         bookie_results = []
         current_bankroll = self.initial_bankroll
         bookie_bankroll = self.initial_bankroll
+        # Fresh ledger per run, so repeated runs (stress_test) never share state
+        history = BetHistory(self.initial_bankroll)
 
         # to_dict("records") keeps per-column dtypes and is far faster than iterrows()
         for i, row in enumerate(self.data.to_dict("records")):
@@ -701,11 +723,13 @@ class PredictionBacktest(BaseBacktest):
             closing = self._closing_odds(row)
             model_probs = [row[col] for col in self.model_prob_columns] if self.model_prob_columns else None
 
-            bet_details = self.strategy.get_bet_details(odds, current_bankroll, model_probs=model_probs, prediction=prediction)
+            bet_details = self.strategy.get_bet_details(odds, current_bankroll, model_probs=model_probs, prediction=prediction,
+                                                        history=history, date=row[self.date_column])
             stake, bet_on, additional_info = bet_details
 
             result = self._simulate_bet(0, i, prediction, bet_on, actual_outcome, odds, current_bankroll, stake, model_probs=model_probs, closing_odds=closing, **additional_info)
             current_bankroll = result['bt_ending_bankroll']
+            self._record_bet(history, result)
             
             result.update(row)
             all_results.append(result)
@@ -718,3 +742,4 @@ class PredictionBacktest(BaseBacktest):
 
         self.detailed_results = pd.DataFrame(all_results)
         self.bookie_results = pd.DataFrame(bookie_results)
+        self.history = history

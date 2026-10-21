@@ -50,9 +50,9 @@ Odds in American or fractional format must be converted to decimal first. Rows a
 
 The strategy decides which outcome to bet on and how much. Start with one of these:
 
-- `FixedStake(10)`: 10 currency units per bet; `FixedStake(0.02)` is 2% of the current bankroll.
+- `FixedStake(amount=10)`: 10 currency units per bet; `FixedStake(fraction=0.02)`: 2% of the current bankroll per bet.
 - `KellyCriterion(downscaling=0.5)`: half Kelly from your probabilities.
-- `ValueBet(min_ev=0.03, stake=10)`: only bets when `p * odds - 1 > 0.03`.
+- `ValueBet(min_ev=0.03, amount=10)`: only bets when `p * odds - 1 > 0.03`.
 
 See the [Strategies Module](strategies-module.md) for all options.
 

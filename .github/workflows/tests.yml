@@ -1,0 +1,41 @@
+# Runs the test suite on every supported Python version and builds the docs.
+# Triggered by pushes to master and by every pull request.
+name: Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  tests:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # report every version, not just the first failure
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+
+      - name: Run tests
+        run: uv run --python ${{ matrix.python-version }} --extra test pytest
+
+  docs:
+    name: Docs build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+
+      - name: Build docs (fails on broken links or missing pages)
+        run: uv run --python 3.12 --extra docs mkdocs build --strict

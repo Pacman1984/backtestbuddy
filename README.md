@@ -60,6 +60,7 @@ backtest.run()
 
 metrics = backtest.calculate_metrics()
 print(metrics["ROI [%]"], metrics["Yield [%]"], metrics["Max Drawdown [%]"])
+# This toy model is only noise around the true odds, so the 5% margin wins: expect a loss.
 backtest.plot()  # interactive Plotly chart
 ```
 

@@ -268,13 +268,17 @@ def _compound_period_returns(
     per_bet.index = pd.DatetimeIndex(dates)
 
     # prod(1 + r) - 1 == expm1(sum(log1p(r))); a vectorized sum avoids a
-    # Python call per bucket. A -100% bet gives -inf, which maps back to -1.
+    # Python call per bucket. A -100% bet gives -inf; older pandas (1.3)
+    # sums -inf + 0 to NaN, so wiped-out periods are set to -1 explicitly.
+    freq = f"{return_period}D"
     with np.errstate(divide="ignore"):
         log_growth = np.log1p(per_bet)
-    grouped = log_growth.groupby(pd.Grouper(freq=f"{return_period}D"))
+    grouped = log_growth.groupby(pd.Grouper(freq=freq))
     sizes = grouped.size()
-    period_returns = np.expm1(grouped.sum()[sizes > 0])
-    return period_returns.astype(float)
+    period_returns = np.expm1(grouped.sum())
+    wiped_out = (per_bet <= -1.0).groupby(pd.Grouper(freq=freq)).any()
+    period_returns[wiped_out] = -1.0
+    return period_returns[sizes > 0].astype(float)
 
 
 def _observed_periods_per_year(

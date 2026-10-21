@@ -9,6 +9,7 @@ from plotly.subplots import make_subplots
 
 from backtestbuddy.metrics.sport_metrics import (
     ECE_BINS,
+    CalibrationScope,
     _equity_drawdown_stats,
     _filter_placed_bets,
     _opening_bankroll,
@@ -393,8 +394,9 @@ def plot_backtest(
 def plot_calibration(
     backtest: Any,
     n_bins: Optional[int] = None,
+    scope: CalibrationScope = "placed",
 ) -> go.Figure:
-    """Plot a reliability diagram for selected-outcome model probabilities.
+    """Plot a reliability diagram for model probabilities.
 
     Equal-width bins on ``[0, 1]``, same as ``calculate_ece``. Each
     marker is the mean predicted probability vs the observed win rate;
@@ -404,6 +406,8 @@ def plot_calibration(
     Args:
         backtest: A backtest instance with ``detailed_results``.
         n_bins: Number of equal-width bins. Defaults to ``ECE_BINS``.
+        scope: ``"placed"`` (selected outcome of placed bets) or ``"all"``
+            (every outcome of every game).
 
     Returns:
         Plotly figure with predicted p on x and observed frequency on y.
@@ -414,11 +418,12 @@ def plot_calibration(
     if n_bins is None:
         n_bins = ECE_BINS
     results = backtest.detailed_results
-    points = _reliability_points(results, n_bins=n_bins)
-    ece = calculate_ece(results, n_bins=n_bins)
-    title = "Reliability Diagram"
+    points = _reliability_points(results, n_bins=n_bins, scope=scope)
+    ece = calculate_ece(results, n_bins=n_bins, scope=scope)
+    label = "placed bets" if scope == "placed" else "all games"
+    title = f"Reliability Diagram ({label})"
     if np.isfinite(ece):
-        title = f"Reliability Diagram (ECE = {ece:.3f})"
+        title = f"Reliability Diagram ({label}, ECE = {ece:.3f})"
 
     fig = go.Figure()
     fig.add_trace(
@@ -456,7 +461,7 @@ def plot_calibration(
         )
     else:
         fig.add_annotation(
-            text="No model probabilities on placed bets",
+            text=f"No model probabilities on {label}",
             xref="paper",
             yref="paper",
             x=0.5,

@@ -14,10 +14,14 @@ probability is ``1 / odds``; overround is ``sum_k 1/odds_k - 1``.
 Sharpe and Sortino annualize with ``output_period`` periods per year.
 The sports default is ``365.25`` (calendar). ``252`` is the equity
 trading-year convention used through 0.1.13. Observed periods/year uses
-the sample density of non-empty return buckets.
+the sample density of periods with at least one placed bet.
+
+Calibration metrics (Brier, log-loss, ECE) have two scopes: ``"placed"``
+scores the selected outcome of placed bets only; ``"all"`` scores every
+outcome of every game that has model probabilities.
 """
 
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -26,6 +30,8 @@ TRADING_DAYS_PER_YEAR = 252.0
 CALENDAR_DAYS_PER_YEAR = 365.25
 LOG_LOSS_CLIP = 1e-15
 ECE_BINS = 10
+
+CalibrationScope = Literal["placed", "all"]
 
 
 class DrawdownWindow(NamedTuple):
@@ -137,6 +143,80 @@ def _placed_probability_frame(detailed_results: pd.DataFrame) -> pd.DataFrame:
     return frame.dropna(subset=["p", "odds", "stake"])
 
 
+def _all_outcome_probability_frame(detailed_results: pd.DataFrame) -> pd.DataFrame:
+    """One row per (game, outcome) with the model probability and result.
+
+    Every row with a known ``bt_actual_outcome`` contributes one pair per
+    ``bt_model_prob_{k}`` column, whether or not a bet was placed. This
+    scores the model on all games instead of only the bets it selected.
+
+    Args:
+        detailed_results: Backtest result rows.
+
+    Returns:
+        Frame with ``p`` and ``win`` (1.0 if outcome ``k`` happened). Empty
+        if there are no model probability columns.
+
+    Example:
+        One game, probs ``[0.6, 0.4]``, outcome 0 → rows ``(0.6, 1)``,
+        ``(0.4, 0)``.
+    """
+    empty = pd.DataFrame(columns=["p", "win"])
+    prefix = "bt_model_prob_"
+    prob_cols = [
+        c
+        for c in detailed_results.columns
+        if c.startswith(prefix) and c[len(prefix) :].isdigit()
+    ]
+    if (
+        len(detailed_results) == 0
+        or not prob_cols
+        or "bt_actual_outcome" not in detailed_results.columns
+    ):
+        return empty
+
+    actual = pd.to_numeric(
+        detailed_results["bt_actual_outcome"], errors="coerce"
+    ).to_numpy(dtype=float)
+    known = ~np.isnan(actual)
+    parts = []
+    for col in sorted(prob_cols, key=lambda c: int(c[len(prefix) :])):
+        outcome = int(col[len(prefix) :])
+        probs = pd.to_numeric(detailed_results[col], errors="coerce")
+        parts.append(
+            pd.DataFrame(
+                {
+                    "p": probs.to_numpy(dtype=float)[known],
+                    "win": (actual[known] == outcome).astype(float),
+                }
+            )
+        )
+    return pd.concat(parts, ignore_index=True).dropna(subset=["p"])
+
+
+def _calibration_frame(
+    detailed_results: pd.DataFrame, scope: CalibrationScope
+) -> pd.DataFrame:
+    """Probability/result pairs for a calibration scope.
+
+    Args:
+        detailed_results: Backtest result rows.
+        scope: ``"placed"`` (selected outcome of placed bets) or ``"all"``
+            (every outcome of every game).
+
+    Returns:
+        Frame with at least ``p`` and ``win``.
+
+    Raises:
+        ValueError: If ``scope`` is unknown.
+    """
+    if scope == "placed":
+        return _placed_probability_frame(detailed_results)
+    if scope == "all":
+        return _all_outcome_probability_frame(detailed_results)
+    raise ValueError("scope must be 'placed' or 'all'.")
+
+
 def _compound_period_returns(
     detailed_results: pd.DataFrame,
     return_period: int = 1,
@@ -144,8 +224,10 @@ def _compound_period_returns(
     """Compound per-bet simple returns into period returns.
 
     Per-bet return is ``bt_profit / bt_starting_bankroll``. Same-period bets
-    compound as ``prod(1 + r) - 1``. Empty calendar days are not filled with
-    zeros.
+    compound as ``prod(1 + r) - 1``. Only placed bets enter (when the stake
+    columns are present), so periods with skipped opportunities only are
+    dropped like empty calendar days. The result therefore does not depend
+    on whether skipped opportunities are in ``detailed_results``.
 
     Args:
         detailed_results: Backtest result rows with dates and P&L.
@@ -159,6 +241,8 @@ def _compound_period_returns(
         Two same-day returns of 0.10 and -0.05 compound to
         ``1.10 * 0.95 - 1 = 0.045``, not ``0.10 - 0.05 = 0.05``.
     """
+    if {"bt_stake", "bt_bet_on"}.issubset(detailed_results.columns):
+        detailed_results = _filter_placed_bets(detailed_results)
     if len(detailed_results) == 0:
         return pd.Series(dtype=float)
 
@@ -184,30 +268,30 @@ def _observed_periods_per_year(
 ) -> float:
     """Observed non-empty return periods per calendar year.
 
-    ``P = n_periods / years`` with ``years = (max_date - min_date).days /
-    365.25``. This matches the density of the Sharpe/Sortino series (empty
-    calendar days are not filled). Prefer this over 252 or 365.25 when
-    betting days are sparse.
+    ``P = n_periods / years`` with ``years = (span_days + return_period) /
+    365.25``. Adding one period to the span counts the last bucket, so
+    ``n`` consecutive daily periods give ``P = 365.25``. This matches the
+    density of the Sharpe/Sortino series (empty periods are not filled).
+    Prefer this over 252 or 365.25 when betting days are sparse.
 
     Args:
         detailed_results: Backtest result rows with dates and P&L.
         return_period: Same bucket length as Sharpe/Sortino.
 
     Returns:
-        Periods per year. ``365.25`` if there are no periods or the date
-        span is zero.
+        Periods per year. ``365.25`` if there are no periods.
 
     Example:
-        50 non-empty daily buckets over 365 days → about ``50.0``.
+        50 non-empty daily buckets over 365 days → about ``50.0``; 10
+        consecutive betting days → ``365.25``.
     """
     returns = _compound_period_returns(detailed_results, return_period)
     if len(returns) == 0 or len(detailed_results) == 0:
         return CALENDAR_DAYS_PER_YEAR
 
     dates = pd.to_datetime(detailed_results["bt_date_column"])
-    years = (dates.max() - dates.min()).days / CALENDAR_DAYS_PER_YEAR
-    if years == 0:
-        return CALENDAR_DAYS_PER_YEAR
+    span_days = (dates.max() - dates.min()).days + return_period
+    years = span_days / CALENDAR_DAYS_PER_YEAR
     return float(len(returns) / years)
 
 
@@ -616,6 +700,10 @@ def calculate_avg_roi_per_bet_micro(detailed_results: pd.DataFrame) -> float:
 def calculate_avg_roi_per_bet_macro(detailed_results: pd.DataFrame) -> float:
     """Calculate total ROI divided by the number of placed bets.
 
+    Not part of ``calculate_all_metrics``: bankroll ROI compounds across
+    bets, so dividing it by the bet count has no per-bet meaning when
+    stakes scale with bankroll. Use ``calculate_yield`` per bet instead.
+
     Args:
         detailed_results: Backtest result rows.
 
@@ -635,16 +723,22 @@ def calculate_avg_roi_per_bet_macro(detailed_results: pd.DataFrame) -> float:
 
 
 def calculate_avg_roi_per_year_micro(detailed_results: pd.DataFrame) -> float:
-    """Calculate the arithmetic mean of calendar-year simple ROIs.
+    """Calculate the duration-weighted mean of calendar-year simple ROIs.
 
     Each year's ROI is ``(year_end - year_start) / year_start * 100``.
-    This is not CAGR.
+    Each year is weighted by the days it covers (first to last row in
+    that year, inclusive), so a two-week partial year does not count as
+    much as a full one. This is not CAGR.
 
     Args:
         detailed_results: Backtest result rows.
 
     Returns:
-        Mean of yearly ROIs in percent, or ``0.0`` if empty.
+        Weighted mean of yearly ROIs in percent, or ``0.0`` if empty.
+
+    Example:
+        A 14-day year at -3.7% and a 365-day year at -25.5% →
+        ``(14 * -3.7 + 365 * -25.5) / 379 ≈ -24.7``.
     """
     if len(detailed_results) == 0:
         return 0.0
@@ -652,8 +746,10 @@ def calculate_avg_roi_per_year_micro(detailed_results: pd.DataFrame) -> float:
     dates = pd.to_datetime(detailed_results["bt_date_column"])
     detailed_results = detailed_results.copy()
     detailed_results["year"] = dates.dt.year
+    detailed_results["date"] = dates
 
     yearly_rois = []
+    weights = []
     for _, group in detailed_results.groupby("year"):
         initial_bankroll = group["bt_starting_bankroll"].iloc[0]
         final_bankroll = group["bt_ending_bankroll"].iloc[-1]
@@ -663,8 +759,11 @@ def calculate_avg_roi_per_year_micro(detailed_results: pd.DataFrame) -> float:
             (final_bankroll - initial_bankroll) / initial_bankroll
         ) * 100
         yearly_rois.append(yearly_roi)
+        weights.append((group["date"].max() - group["date"].min()).days + 1)
 
-    return float(np.mean(yearly_rois)) if yearly_rois else 0.0
+    if not yearly_rois:
+        return 0.0
+    return float(np.average(yearly_rois, weights=weights))
 
 
 def calculate_avg_roi_per_year_macro(detailed_results: pd.DataFrame) -> float:
@@ -910,48 +1009,57 @@ def calculate_average_overround(detailed_results: pd.DataFrame) -> float:
     return float(overround.mean() * 100)
 
 
-def calculate_brier_score(detailed_results: pd.DataFrame) -> float:
-    """Calculate Brier score of the selected-outcome model probability.
+def calculate_brier_score(
+    detailed_results: pd.DataFrame,
+    scope: CalibrationScope = "placed",
+) -> float:
+    """Calculate the Brier score of model probabilities.
 
-    ``mean((p - y)^2)`` with ``y=1`` on a win and ``0`` on a loss.
+    ``mean((p - y)^2)`` with ``y=1`` if the outcome happened, else ``0``.
 
     Args:
         detailed_results: Backtest result rows with ``bt_model_prob_*``.
+        scope: ``"placed"`` scores the selected outcome of placed bets;
+            ``"all"`` scores every outcome of every game.
 
     Returns:
         Mean squared error of p vs outcome. ``nan`` if no probabilities;
-        ``0.0`` if no placed bets.
+        ``0.0`` if no placed bets in ``"placed"`` scope.
 
     Example:
         p=0.6 win → ``(0.6-1)^2 = 0.16``.
     """
-    frame = _placed_probability_frame(detailed_results)
-    if _filter_placed_bets(detailed_results).empty:
+    if scope == "placed" and _filter_placed_bets(detailed_results).empty:
         return 0.0
+    frame = _calibration_frame(detailed_results, scope)
     if frame.empty:
         return float("nan")
     return float(((frame["p"] - frame["win"]) ** 2).mean())
 
 
-def calculate_log_loss(detailed_results: pd.DataFrame) -> float:
-    """Calculate binary log loss of the selected-outcome probability.
+def calculate_log_loss(
+    detailed_results: pd.DataFrame,
+    scope: CalibrationScope = "placed",
+) -> float:
+    """Calculate binary log loss of model probabilities.
 
     ``-mean(y log p + (1-y) log(1-p))``. ``p`` is clipped to
     ``[1e-15, 1-1e-15]``.
 
     Args:
         detailed_results: Backtest result rows with ``bt_model_prob_*``.
+        scope: ``"placed"`` or ``"all"``, as in ``calculate_brier_score``.
 
     Returns:
         Mean log loss. ``nan`` if no probabilities; ``0.0`` if no
-        placed bets.
+        placed bets in ``"placed"`` scope.
 
     Example:
         p=0.6 win → ``-log(0.6)``.
     """
-    frame = _placed_probability_frame(detailed_results)
-    if _filter_placed_bets(detailed_results).empty:
+    if scope == "placed" and _filter_placed_bets(detailed_results).empty:
         return 0.0
+    frame = _calibration_frame(detailed_results, scope)
     if frame.empty:
         return float("nan")
     p = frame["p"].clip(LOG_LOSS_CLIP, 1.0 - LOG_LOSS_CLIP)
@@ -962,6 +1070,7 @@ def calculate_log_loss(detailed_results: pd.DataFrame) -> float:
 def _reliability_points(
     detailed_results: pd.DataFrame,
     n_bins: int = ECE_BINS,
+    scope: CalibrationScope = "placed",
 ) -> pd.DataFrame:
     """Equal-width reliability points for a calibration diagram.
 
@@ -972,15 +1081,16 @@ def _reliability_points(
     Args:
         detailed_results: Backtest result rows with ``bt_model_prob_*``.
         n_bins: Number of equal-width probability bins.
+        scope: ``"placed"`` or ``"all"``, as in ``calculate_brier_score``.
 
     Returns:
         Frame with ``mean_p``, ``win_rate``, and ``count``. Empty if
-        there are no selected-outcome probabilities.
+        there are no probabilities in the scope.
 
     Example:
         All ``p=0.6`` and half win → one row ``(0.6, 0.5, N)``.
     """
-    frame = _placed_probability_frame(detailed_results)
+    frame = _calibration_frame(detailed_results, scope)
     empty = pd.DataFrame(columns=["mean_p", "win_rate", "count"])
     if frame.empty:
         return empty
@@ -1006,8 +1116,9 @@ def _reliability_points(
 def calculate_ece(
     detailed_results: pd.DataFrame,
     n_bins: int = ECE_BINS,
+    scope: CalibrationScope = "placed",
 ) -> float:
-    """Calculate expected calibration error of selected-outcome p.
+    """Calculate expected calibration error of model probabilities.
 
     Equal-width bins on ``[0, 1]``. Empty bins are skipped.
     ``ECE = sum_m (n_m / N) * |acc_m - conf_m|``.
@@ -1015,17 +1126,18 @@ def calculate_ece(
     Args:
         detailed_results: Backtest result rows with ``bt_model_prob_*``.
         n_bins: Number of equal-width probability bins.
+        scope: ``"placed"`` or ``"all"``, as in ``calculate_brier_score``.
 
     Returns:
         ECE in ``[0, 1]``. ``nan`` if no probabilities; ``0.0`` if no
-        placed bets.
+        placed bets in ``"placed"`` scope.
 
     Example:
         All p=0.6 and half win → one occupied bin, ECE = ``|0.5-0.6|=0.1``.
     """
-    if _filter_placed_bets(detailed_results).empty:
+    if scope == "placed" and _filter_placed_bets(detailed_results).empty:
         return 0.0
-    points = _reliability_points(detailed_results, n_bins=n_bins)
+    points = _reliability_points(detailed_results, n_bins=n_bins, scope=scope)
     if points.empty:
         return float("nan")
     n = int(points["count"].sum())
@@ -1044,9 +1156,13 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
     key: calendar ``365.25``, trading-year ``252``, and observed
     non-empty periods per year. There is no unnamed key.
 
-    Yield is profit over total staked. Expected profit / yield and
-    Brier / log-loss / ECE use the model probability of the selected
-    outcome when ``bt_model_prob_*`` is present.
+    Sharpe and Sortino use only periods with placed bets.
+
+    Yield is profit over total staked. Expected profit / yield use the
+    model probability of the selected outcome. Brier / log-loss / ECE are
+    reported twice: ``(placed)`` on the selected outcome of placed bets,
+    ``(all games)`` on every outcome of every game. Both need
+    ``bt_model_prob_*``.
 
     Args:
         detailed_results: Full backtest result rows.
@@ -1085,9 +1201,6 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
         "Yield [%]": calculate_yield(detailed_results),
         "Expected Yield [%]": calculate_expected_yield(detailed_results),
         "Avg. ROI per Bet [%] (micro)": calculate_avg_roi_per_bet_micro(
-            detailed_results
-        ),
-        "Avg. ROI per Bet [%] (macro)": calculate_avg_roi_per_bet_macro(
             detailed_results
         ),
         "Avg. ROI per Year [%] (micro)": calculate_avg_roi_per_year_micro(
@@ -1135,9 +1248,16 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
         "Average Overround [%]": calculate_average_overround(
             detailed_results
         ),
-        "Brier Score [-]": calculate_brier_score(detailed_results),
-        "Log Loss [-]": calculate_log_loss(detailed_results),
-        "ECE [-]": calculate_ece(detailed_results),
+        "Brier Score (placed) [-]": calculate_brier_score(detailed_results),
+        "Brier Score (all games) [-]": calculate_brier_score(
+            detailed_results, scope="all"
+        ),
+        "Log Loss (placed) [-]": calculate_log_loss(detailed_results),
+        "Log Loss (all games) [-]": calculate_log_loss(
+            detailed_results, scope="all"
+        ),
+        "ECE (placed) [-]": calculate_ece(detailed_results),
+        "ECE (all games) [-]": calculate_ece(detailed_results, scope="all"),
         "Highest Winning Odds [-]": highest_winning_odds,
         "Highest Losing Odds [-]": highest_losing_odds,
         "Average Stake [$]": calculate_average_stake(bet_placed),

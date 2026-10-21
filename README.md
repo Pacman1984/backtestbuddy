@@ -91,6 +91,13 @@ backtest.plot_odds_distribution()
 
 ### Unreleased
 
+**New features:**
+- **Margin removal**: `remove_margin(odds, method=...)` with `multiplicative`, `additive`, `power`, and `shin` (new `backtestbuddy.odds` module).
+- **Closing line value**: Backtests take `closing_odds_columns` (any reference line, same order as `odds_columns`). New metrics `CLV [%]`, `CLV (no-vig) [%]`, `Beat Closing Line [%]`; `nan` without closing odds.
+- **Market baseline**: `Brier Score (market, all games) [-]` and `Log Loss (market, all games) [-]` score the margin-free odds, so you can see whether the model beats the line.
+- **Odds stress test**: `odds_haircut=` lowers bet odds (floored at 1.0) before staking and settlement; `backtest.stress_test(haircuts=[...])` returns metrics per haircut.
+- **`margin_method=`** on backtests and `calculate_all_metrics` controls margin removal for no-vig CLV and the market baseline.
+
 **⚠️ Breaking Changes (metric values and keys):**
 - **Brier / Log Loss / ECE**: Keys now name the scope: `Brier Score (placed) [-]` etc. (selected outcome of placed bets, the old values) and new `(all games) [-]` variants over every outcome of every game. `calculate_brier_score`, `calculate_log_loss`, `calculate_ece`, and `plot_calibration` take `scope="placed" | "all"`.
 - **Sharpe / Sortino / Calmar**: Period returns use placed bets only. Days with only skipped opportunities no longer enter as 0% periods, so results no longer depend on whether skipped rows are in the data.

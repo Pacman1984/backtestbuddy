@@ -206,8 +206,8 @@ class TestBacktestWorkflow:
         metrics1 = backtest.calculate_metrics()
         metrics2 = backtest.calculate_metrics()
         
-        # Metrics should be identical
-        assert metrics1 == metrics2
+        # Metrics should be identical; NaN (e.g. CLV without closing odds) counts as equal
+        assert pd.Series(metrics1).equals(pd.Series(metrics2))
         
         # Verify key metrics are reasonable
         assert isinstance(metrics1['ROI [%]'], (int, float))

@@ -276,3 +276,33 @@ Brier, Log Loss, and ECE are reported in two scopes. Each function takes `scope=
 - Columns used: same as Brier
 - Edge cases: same as Brier; `calculate_ece(..., n_bins=)` to change the bin count
 
+### Market baseline (Brier / Log Loss, market, all games)
+
+- Description: The same all-games scores, but with the bookmaker's margin-free probabilities from `bt_odd_*` instead of the model's. If `Brier Score (all games)` is below `Brier Score (market, all games)`, the model predicts outcomes better than the line it bets into.
+- Calculation: `remove_margin(bt_odd_*, method=margin_method)` per game, then one binary pair per (game, outcome) as in the `(all games)` scope.
+- Columns used: `bt_odd_{k}`, `bt_actual_outcome`. No model needed.
+- Edge cases: `nan` without odds columns or outcomes.
+
+## Closing line value
+
+These metrics need `closing_odds_columns` in the backtest (stored as `bt_closing_odd_{k}`) and are `nan` without them. The reference line can be any later or sharper set of odds; it does not have to be the literal close.
+
+### CLV
+
+- Description: Mean of how much better your odds were than the reference odds of the same outcome, over placed bets.
+- Formula: $\mathrm{CLV} = \overline{odds_{taken} / odds_{close} - 1} \times 100\%$
+- Example: took 2.20, closed 2.00 → +10%.
+
+### CLV (no-vig)
+
+- Description: Expected return per unit if the margin-free closing line is the true probability.
+- Formula: $\overline{odds_{taken} \cdot p^{fair}_{close} - 1} \times 100\%$, with $p^{fair}_{close}$ from `remove_margin(bt_closing_odd_*, margin_method)`.
+- Note: Stricter than raw CLV because the closing margin is removed. Positive no-vig CLV over many bets is strong evidence of an edge.
+
+### Beat Closing Line
+
+- Description: Percent of placed bets whose odds were strictly higher than the closing odds of the selected outcome. Equal odds do not count.
+- Note: Read together with CLV. A high share with positive CLV means consistently better prices; a low share with positive CLV means a few large outliers carry the result.
+
+Edge cases for all three: `0.0` if no bets were placed.
+

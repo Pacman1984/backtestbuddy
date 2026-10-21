@@ -1,5 +1,6 @@
+import copy
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -7,6 +8,7 @@ import plotly.graph_objects as go
 from sklearn.model_selection import TimeSeriesSplit
 
 from backtestbuddy.metrics.sport_metrics import calculate_all_metrics
+from backtestbuddy.odds.margin import MARGIN_METHODS
 from backtestbuddy.plots.sport_plots import (
     plot_backtest,
     plot_calibration,
@@ -16,6 +18,16 @@ from backtestbuddy.strategies.sport_strategies import (
     BaseStrategy,
     FixedStake,
     get_default_strategy,
+)
+
+STRESS_TEST_METRICS = (
+    "ROI [%]",
+    "Yield [%]",
+    "CAGR [%]",
+    "Max Drawdown [%]",
+    "Sharpe Ratio (365.25) [-]",
+    "Total Bets",
+    "Bankroll Final [$]",
 )
 
 
@@ -35,18 +47,24 @@ class BaseBacktest(ABC):
         model (Optional[Any]): The model to be used for predictions, if applicable.
         strategy (BaseStrategy): The betting strategy to be used.
         cv_schema (Any): The cross-validation schema to be used.
+        closing_odds_columns (Optional[List[str]]): Reference odds per outcome for CLV.
+        odds_haircut (float): Fraction by which bet odds are lowered before staking and settlement.
+        margin_method (str): Method used to remove the bookmaker margin in metrics.
         detailed_results (Optional[pd.DataFrame]): Detailed results of the backtest.
     """
 
-    def __init__(self, 
-                 data: pd.DataFrame, 
+    def __init__(self,
+                 data: pd.DataFrame,
                  odds_columns: List[str],
                  outcome_column: str,
                  date_column: str,
                  initial_bankroll: float = 1000.0,
-                 model: Optional[Any] = None, 
-                 strategy: Optional[BaseStrategy] = None, 
-                 cv_schema: Optional[Any] = None):
+                 model: Optional[Any] = None,
+                 strategy: Optional[BaseStrategy] = None,
+                 cv_schema: Optional[Any] = None,
+                 closing_odds_columns: Optional[List[str]] = None,
+                 odds_haircut: float = 0.0,
+                 margin_method: str = "multiplicative"):
         """
         Initialize the BaseBacktest.
 
@@ -59,10 +77,33 @@ class BaseBacktest(ABC):
             model (Optional[Any], optional): The model to be used for predictions. Defaults to None.
             strategy (Optional[BaseStrategy], optional): The betting strategy to be used. 
                 Defaults to a default strategy if None is provided.
-            cv_schema (Optional[Any], optional): The cross-validation schema to be used. 
+            cv_schema (Optional[Any], optional): The cross-validation schema to be used.
                 Defaults to TimeSeriesSplit with 5 splits if None is provided.
+            closing_odds_columns (Optional[List[str]], optional): Reference odds for each
+                outcome, in the same order as ``odds_columns``. Usually closing odds, but any
+                later or sharper line works. Enables the CLV metrics. Defaults to None.
+            odds_haircut (float): Lower every bet odd by this fraction before the strategy
+                sees it and before settlement, e.g. ``0.02`` for 2% worse prices. Odds are
+                floored at 1.0. Model features and closing odds are not changed. Defaults to 0.
+            margin_method (str): How metrics remove the bookmaker margin: ``multiplicative``,
+                ``additive``, ``power``, or ``shin``. Defaults to ``multiplicative``.
+
+        Raises:
+            ValueError: If closing odds columns are missing or do not match ``odds_columns``
+                in length, ``odds_haircut`` is outside ``[0, 1)``, or ``margin_method`` is
+                unknown.
         """
-        # Stable sort keeps the input order of same-date rows reproducible.
+        if closing_odds_columns is not None:
+            if len(closing_odds_columns) != len(odds_columns):
+                raise ValueError("closing_odds_columns must have one column per odds column")
+            missing = [col for col in closing_odds_columns if col not in data.columns]
+            if missing:
+                raise ValueError(f"Closing odds columns not found in the dataset: {missing}")
+        if not 0 <= odds_haircut < 1:
+            raise ValueError("odds_haircut must be in [0, 1)")
+        if margin_method not in MARGIN_METHODS:
+            raise ValueError(f"margin_method must be one of {MARGIN_METHODS}, got {margin_method!r}")
+        # Stable sortkeeps the input order of same-date rows reproducible.
         self.data = data.sort_values(date_column, kind="mergesort").reset_index(drop=True)
         self.odds_columns = odds_columns
         self.outcome_column = outcome_column
@@ -75,6 +116,9 @@ class BaseBacktest(ABC):
         self.bookie_results: Optional[pd.DataFrame] = None
         self.metrics: Optional[Dict[str, Any]] = None
         self.model_prob_columns: Optional[List[str]] = None
+        self.closing_odds_columns = closing_odds_columns
+        self.odds_haircut = odds_haircut
+        self.margin_method = margin_method
 
     @abstractmethod
     def run(self) -> None:
@@ -89,6 +133,29 @@ class BaseBacktest(ABC):
         """
         pass
 
+
+    def _bet_odds(self, odds: List[float]) -> List[float]:
+        """Apply ``odds_haircut`` to market odds, floored at 1.0.
+
+        Args:
+            odds: Decimal odds for each outcome.
+
+        Returns:
+            Odds the bettor actually gets. Unchanged when the haircut is 0.
+
+        Example:
+            haircut 0.02, odds ``[2.0, 1.02]`` → ``[1.96, 1.0]``.
+        """
+        if not self.odds_haircut:
+            return odds
+        lowered = [odd * (1 - self.odds_haircut) for odd in odds]
+        return [1.0 if odd < 1.0 else odd for odd in lowered]
+
+    def _closing_odds(self, row: Dict[str, Any]) -> Optional[List[float]]:
+        """Closing odds of one data row, or None without closing columns."""
+        if self.closing_odds_columns is None:
+            return None
+        return [row[col] for col in self.closing_odds_columns]
 
     def get_detailed_results(self) -> pd.DataFrame:
         """
@@ -118,7 +185,7 @@ class BaseBacktest(ABC):
             raise ValueError("Backtest has not been run yet. Call run() first.")
         return self.bookie_results
 
-    def _simulate_bet(self, fold: int, index: int, prediction: int, bet_on: int, actual_outcome: int, odds: List[float], current_bankroll: float, stake: float, model_probs: Optional[List[float]] = None, **additional_info: Any) -> Dict[str, Any]:
+    def _simulate_bet(self, fold: int, index: int, prediction: int, bet_on: int, actual_outcome: int, odds: List[float], current_bankroll: float, stake: float, model_probs: Optional[List[float]] = None, closing_odds: Optional[List[float]] = None, **additional_info: Any) -> Dict[str, Any]:
         """
         Process a bet by placing it, simulating its outcome, and generating the result.
 
@@ -132,6 +199,8 @@ class BaseBacktest(ABC):
             current_bankroll (float): The current bankroll before placing the bet.
             stake (float): The stake amount for the bet.
             model_probs (Optional[List[float]]): The model's predicted probabilities for each outcome.
+            closing_odds (Optional[List[float]]): Reference odds for each outcome, stored as
+                ``bt_closing_odd_{i}``.
             **additional_info: Additional information to be included in the result.
 
         Returns:
@@ -151,6 +220,7 @@ class BaseBacktest(ABC):
                 'bt_odds': The odds for the outcome bet on (None if no bet was placed).
                 'bt_odd_{i}': The odds for each possible outcome.
                 'bt_model_prob_{i}': The model probability for each possible outcome (if provided).
+                'bt_closing_odd_{i}': The reference odds for each outcome (if provided).
                 'bt_date_column': The date of the event from the specified date column.
                 Additional keys from **additional_info will also be included.
 
@@ -217,6 +287,10 @@ class BaseBacktest(ABC):
             for i, prob in enumerate(model_probs):
                 result[f'bt_model_prob_{i}'] = prob
 
+        if closing_odds is not None:
+            for i, odd in enumerate(closing_odds):
+                result[f'bt_closing_odd_{i}'] = odd
+
         # Add any additional information as bt_* columns
         for key, value in additional_info.items():
             result[f'bt_{key}'] = value
@@ -231,8 +305,45 @@ class BaseBacktest(ABC):
         if self.detailed_results is None:
             raise ValueError("Backtest results are not available. Make sure to run the backtest first.")
         
-        self.metrics = calculate_all_metrics(self.detailed_results)
+        self.metrics = calculate_all_metrics(self.detailed_results, margin_method=self.margin_method)
         return self.metrics
+
+    def stress_test(self,
+                    haircuts: Sequence[float] = (0.0, 0.01, 0.02, 0.03),
+                    metrics: Sequence[str] = STRESS_TEST_METRICS) -> pd.DataFrame:
+        """
+        Re-run the backtest with progressively worse odds.
+
+        Each run lowers every bet odd by one haircut fraction (see ``odds_haircut``). The
+        strategy decides and bets settle at the lowered odds; model features, model
+        probabilities, and closing odds stay as they are. This shows how much of the edge
+        survives when you cannot get the odds in the data, e.g. because you bet after the
+        opening line has moved.
+
+        Args:
+            haircuts (Sequence[float]): Odds reductions to test, each in ``[0, 1)``.
+            metrics (Sequence[str]): Keys of ``calculate_all_metrics`` to report.
+
+        Returns:
+            pd.DataFrame: One row per haircut (index ``odds_haircut``), one column per metric.
+            This backtest's own results are left unchanged.
+
+        Example:
+            >>> backtest.stress_test(haircuts=[0, 0.02])["Yield [%]"]
+        """
+        rows = {}
+        for haircut in haircuts:
+            if not 0 <= haircut < 1:
+                raise ValueError("Each haircut must be in [0, 1)")
+            # Shallow copy: data is shared read-only; run() replaces the result frames
+            trial = copy.copy(self)
+            trial.odds_haircut = haircut
+            trial.run()
+            summary = calculate_all_metrics(trial.detailed_results, margin_method=self.margin_method)
+            rows[haircut] = {name: summary[name] for name in metrics}
+        table = pd.DataFrame.from_dict(rows, orient="index")
+        table.index.name = "odds_haircut"
+        return table
 
     def plot(self, x_axis: str = "bet", show_bookie: bool = True):
         """
@@ -285,7 +396,7 @@ class BaseBacktest(ABC):
         """
         return plot_odds_histogram(self, num_bins)
 
-    def _simulate_bookie_bet(self, fold: int, index: int, odds: List[float], actual_outcome: int, current_bankroll: float) -> Dict[str, Any]:
+    def _simulate_bookie_bet(self, fold: int, index: int, odds: List[float], actual_outcome: int, current_bankroll: float, closing_odds: Optional[List[float]] = None) -> Dict[str, Any]:
         """
         Simulate a bet using the bookie strategy (lowest-odds favorite).
 
@@ -300,6 +411,7 @@ class BaseBacktest(ABC):
             odds: Decimal odds for each possible outcome.
             actual_outcome: Actual outcome index (0-based).
             current_bankroll: Bankroll before placing the bet.
+            closing_odds: Reference odds for each outcome, if available.
 
         Returns:
             Result row for the bookie bet.
@@ -346,6 +458,10 @@ class BaseBacktest(ABC):
         for i, odd in enumerate(odds):
             result[f'bt_odd_{i}'] = odd
 
+        if closing_odds is not None:
+            for i, odd in enumerate(closing_odds):
+                result[f'bt_closing_odd_{i}'] = odd
+
         return result
 
 
@@ -370,7 +486,10 @@ class ModelBacktest(BaseBacktest):
                  initial_bankroll: float = 1000.0,
                  strategy: Optional[BaseStrategy] = None, 
                  cv_schema: Optional[Any] = None,
-                 feature_columns: Optional[List[str]] = None):
+                 feature_columns: Optional[List[str]] = None,
+                 closing_odds_columns: Optional[List[str]] = None,
+                 odds_haircut: float = 0.0,
+                 margin_method: str = "multiplicative"):
         """
         Initialize the ModelBacktester.
 
@@ -386,11 +505,16 @@ class ModelBacktest(BaseBacktest):
             feature_columns (Optional[List[str]], optional): Columns passed to the model.
                 Defaults to every column except the date and outcome columns. Set this
                 explicitly to keep IDs, prediction or post-event columns out of the model.
+                Closing odds are post-event data for a bettor; exclude them here.
+            closing_odds_columns (Optional[List[str]], optional): Reference odds for CLV.
+            odds_haircut (float): Fraction by which bet odds are lowered. Defaults to 0.
+            margin_method (str): Margin removal method for metrics.
 
         Raises:
             ValueError: If a feature column is missing from the dataset.
         """
-        super().__init__(data, odds_columns, outcome_column, date_column, initial_bankroll, model, strategy, cv_schema)
+        super().__init__(data, odds_columns, outcome_column, date_column, initial_bankroll, model, strategy, cv_schema,
+                         closing_odds_columns, odds_haircut, margin_method)
         if feature_columns is not None:
             missing = [col for col in feature_columns if col not in data.columns]
             if missing:
@@ -437,7 +561,7 @@ class ModelBacktest(BaseBacktest):
                 )
 
             # Convert once per fold; per-row .iloc lookups dominate runtime otherwise
-            odds_rows = X_test[self.odds_columns].to_numpy(dtype=float).tolist()
+            odds_rows = [self._bet_odds(row) for row in X_test[self.odds_columns].to_numpy(dtype=float).tolist()]
             outcomes = y_test.tolist()
             records = X_test.to_dict("records")
 
@@ -455,7 +579,8 @@ class ModelBacktest(BaseBacktest):
                 bet_details = self.strategy.get_bet_details(odds, current_bankroll, model_probs=probs_list, prediction=prediction)
                 stake, bet_on, additional_info = bet_details
 
-                result = self._simulate_bet(fold, test_index[i], prediction, bet_on, actual_outcome, odds, current_bankroll, stake, model_probs=probs_list, **additional_info)
+                closing = self._closing_odds(records[i])
+                result = self._simulate_bet(fold, test_index[i], prediction, bet_on, actual_outcome, odds, current_bankroll, stake, model_probs=probs_list, closing_odds=closing, **additional_info)
                 current_bankroll = result['bt_ending_bankroll']
                 
                 # Add all original features to the result
@@ -463,7 +588,7 @@ class ModelBacktest(BaseBacktest):
                 all_results.append(result)
 
                 # Simulate bookie bet
-                bookie_result = self._simulate_bookie_bet(fold, test_index[i], odds, actual_outcome, bookie_bankroll)
+                bookie_result = self._simulate_bookie_bet(fold, test_index[i], odds, actual_outcome, bookie_bankroll, closing_odds=closing)
                 bookie_bankroll = bookie_result['bt_ending_bankroll']
                 
                 # Add all original features to the bookie result
@@ -499,7 +624,10 @@ class PredictionBacktest(BaseBacktest):
                  prediction_column: str,
                  initial_bankroll: float = 1000.0,
                  strategy: Optional[BaseStrategy] = None,
-                 model_prob_columns: Optional[List[str]] = None):
+                 model_prob_columns: Optional[List[str]] = None,
+                 closing_odds_columns: Optional[List[str]] = None,
+                 odds_haircut: float = 0.0,
+                 margin_method: str = "multiplicative"):
         """
         Initialize the PredictionBacktester.
 
@@ -516,12 +644,16 @@ class PredictionBacktest(BaseBacktest):
             initial_bankroll (float): The initial bankroll for the simulation. Defaults to 1000.0.
             strategy (Optional[BaseStrategy], optional): The betting strategy to be used.
             model_prob_columns (Optional[List[str]], optional): The names of the columns in the dataset that contain the model probabilities.
+            closing_odds_columns (Optional[List[str]], optional): Reference odds for CLV.
+            odds_haircut (float): Fraction by which bet odds are lowered. Defaults to 0.
+            margin_method (str): Margin removal method for metrics.
 
         Raises:
             ValueError: If the specified prediction_column is not found in the dataset.
             ValueError: If the strategy requires model probabilities but model_prob_columns is not provided.
         """
-        super().__init__(data, odds_columns, outcome_column, date_column, initial_bankroll, None, strategy, None)
+        super().__init__(data, odds_columns, outcome_column, date_column, initial_bankroll, None, strategy, None,
+                         closing_odds_columns, odds_haircut, margin_method)
         
         if prediction_column not in data.columns:
             raise ValueError(f"Prediction column '{prediction_column}' not found in the dataset.")
@@ -565,19 +697,20 @@ class PredictionBacktest(BaseBacktest):
         for i, row in enumerate(self.data.to_dict("records")):
             prediction = row[self.prediction_column]
             actual_outcome = row[self.outcome_column]
-            odds = [row[col] for col in self.odds_columns]
+            odds = self._bet_odds([row[col] for col in self.odds_columns])
+            closing = self._closing_odds(row)
             model_probs = [row[col] for col in self.model_prob_columns] if self.model_prob_columns else None
 
             bet_details = self.strategy.get_bet_details(odds, current_bankroll, model_probs=model_probs, prediction=prediction)
             stake, bet_on, additional_info = bet_details
 
-            result = self._simulate_bet(0, i, prediction, bet_on, actual_outcome, odds, current_bankroll, stake, model_probs=model_probs, **additional_info)
+            result = self._simulate_bet(0, i, prediction, bet_on, actual_outcome, odds, current_bankroll, stake, model_probs=model_probs, closing_odds=closing, **additional_info)
             current_bankroll = result['bt_ending_bankroll']
             
             result.update(row)
             all_results.append(result)
 
-            bookie_result = self._simulate_bookie_bet(0, i, odds, actual_outcome, bookie_bankroll)
+            bookie_result = self._simulate_bookie_bet(0, i, odds, actual_outcome, bookie_bankroll, closing_odds=closing)
             bookie_bankroll = bookie_result['bt_ending_bankroll']
             
             bookie_result.update(row)

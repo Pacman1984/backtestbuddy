@@ -18,7 +18,11 @@ the sample density of periods with at least one placed bet.
 
 Calibration metrics (Brier, log-loss, ECE) have two scopes: ``"placed"``
 scores the selected outcome of placed bets only; ``"all"`` scores every
-outcome of every game that has model probabilities.
+outcome of every game that has model probabilities. The market baseline
+scores the margin-free probabilities of ``bt_odd_*`` the same way.
+
+Closing line value (CLV) compares the odds taken with reference odds in
+``bt_closing_odd_*``; those columns are optional.
 """
 
 from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple
@@ -26,7 +30,9 @@ from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-TRADING_DAYS_PER_YEAR = 252.0
+from backtestbuddy.odds.margin import MarginMethod, remove_margin
+
+TRADING_DAYS_PER_YEAR= 252.0
 CALENDAR_DAYS_PER_YEAR = 365.25
 LOG_LOSS_CLIP = 1e-15
 ECE_BINS = 10
@@ -71,6 +77,24 @@ def _filter_placed_bets(detailed_results: pd.DataFrame) -> pd.DataFrame:
     ]
 
 
+def _numbered_columns(detailed_results: pd.DataFrame, prefix: str) -> List[str]:
+    """Return ``{prefix}{i}`` columns sorted by outcome index.
+
+    Args:
+        detailed_results: Backtest result rows.
+        prefix: Column prefix such as ``bt_odd_``.
+
+    Returns:
+        Matching column names, e.g. ``bt_odd_0``, ``bt_odd_1``.
+    """
+    cols = [
+        c
+        for c in detailed_results.columns
+        if c.startswith(prefix) and c[len(prefix) :].isdigit()
+    ]
+    return sorted(cols, key=lambda name: int(name[len(prefix) :]))
+
+
 def _outcome_odd_columns(detailed_results: pd.DataFrame) -> List[str]:
     """Return ``bt_odd_{i}`` columns sorted by outcome index.
 
@@ -80,16 +104,7 @@ def _outcome_odd_columns(detailed_results: pd.DataFrame) -> List[str]:
     Returns:
         Column names such as ``bt_odd_0``, ``bt_odd_1``.
     """
-    cols = [
-        c
-        for c in detailed_results.columns
-        if c.startswith("bt_odd_") and c[len("bt_odd_") :].isdigit()
-    ]
-
-    def _index(name: str) -> int:
-        return int(name[len("bt_odd_") :])
-
-    return sorted(cols, key=_index)
+    return _numbered_columns(detailed_results, "bt_odd_")
 
 
 def _selected_model_probability(bet_placed: pd.DataFrame) -> pd.Series:
@@ -1009,6 +1024,18 @@ def calculate_average_overround(detailed_results: pd.DataFrame) -> float:
     return float(overround.mean() * 100)
 
 
+def _brier(frame: pd.DataFrame) -> float:
+    """Mean squared error of ``p`` vs ``win`` in a probability frame."""
+    return float(((frame["p"] - frame["win"]) ** 2).mean())
+
+
+def _log_loss(frame: pd.DataFrame) -> float:
+    """Binary log loss of ``p`` vs ``win`` with ``p`` clipped away from 0/1."""
+    p = frame["p"].clip(LOG_LOSS_CLIP, 1.0 - LOG_LOSS_CLIP)
+    y = frame["win"]
+    return float((-(y * np.log(p) + (1.0 - y) * np.log(1.0 - p))).mean())
+
+
 def calculate_brier_score(
     detailed_results: pd.DataFrame,
     scope: CalibrationScope = "placed",
@@ -1034,7 +1061,7 @@ def calculate_brier_score(
     frame = _calibration_frame(detailed_results, scope)
     if frame.empty:
         return float("nan")
-    return float(((frame["p"] - frame["win"]) ** 2).mean())
+    return _brier(frame)
 
 
 def calculate_log_loss(
@@ -1062,9 +1089,7 @@ def calculate_log_loss(
     frame = _calibration_frame(detailed_results, scope)
     if frame.empty:
         return float("nan")
-    p = frame["p"].clip(LOG_LOSS_CLIP, 1.0 - LOG_LOSS_CLIP)
-    y = frame["win"]
-    return float((-(y * np.log(p) + (1.0 - y) * np.log(1.0 - p))).mean())
+    return _log_loss(frame)
 
 
 def _reliability_points(
@@ -1145,7 +1170,200 @@ def calculate_ece(
     return float((points["count"] / n * gap).sum())
 
 
-def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
+def _market_probability_frame(
+    detailed_results: pd.DataFrame,
+    method: MarginMethod = "multiplicative",
+) -> pd.DataFrame:
+    """One row per (game, outcome) with the margin-free market probability.
+
+    Fair probabilities come from ``bt_odd_*`` (the odds bet into) with
+    ``remove_margin``. Every game with a known outcome counts, bet or not.
+
+    Args:
+        detailed_results: Backtest result rows.
+        method: Margin removal method.
+
+    Returns:
+        Frame with ``p`` and ``win``. Empty without odds or outcomes.
+    """
+    empty = pd.DataFrame(columns=["p", "win"])
+    odd_cols = _outcome_odd_columns(detailed_results)
+    if (
+        len(detailed_results) == 0
+        or len(odd_cols) < 2
+        or "bt_actual_outcome" not in detailed_results.columns
+    ):
+        return empty
+    actual = pd.to_numeric(
+        detailed_results["bt_actual_outcome"], errors="coerce"
+    ).to_numpy(dtype=float)
+    known = ~np.isnan(actual)
+    odds = detailed_results[odd_cols].apply(pd.to_numeric, errors="coerce")
+    fair = remove_margin(odds.to_numpy(dtype=float)[known], method)
+    outcomes = np.arange(len(odd_cols))
+    frame = pd.DataFrame(
+        {
+            "p": fair.ravel(),
+            "win": (actual[known][:, None] == outcomes).astype(float).ravel(),
+        }
+    )
+    return frame.dropna(subset=["p"])
+
+
+def calculate_market_brier_score(
+    detailed_results: pd.DataFrame,
+    method: MarginMethod = "multiplicative",
+) -> float:
+    """Calculate the Brier score of margin-free market probabilities.
+
+    Same pairs as ``calculate_brier_score(scope="all")`` but with the
+    bookmaker's fair probabilities instead of the model's. A model whose
+    all-games Brier score is lower than this beats the market line.
+
+    Args:
+        detailed_results: Backtest result rows with ``bt_odd_*``.
+        method: Margin removal method (see ``remove_margin``).
+
+    Returns:
+        Brier score, or ``nan`` without odds or outcomes.
+
+    Example:
+        Odds ``[1.9, 1.9]``, outcome 0 → ``mean(0.5^2, 0.5^2) = 0.25``.
+    """
+    frame = _market_probability_frame(detailed_results, method)
+    if frame.empty:
+        return float("nan")
+    return _brier(frame)
+
+
+def calculate_market_log_loss(
+    detailed_results: pd.DataFrame,
+    method: MarginMethod = "multiplicative",
+) -> float:
+    """Calculate the log loss of margin-free market probabilities.
+
+    Args:
+        detailed_results: Backtest result rows with ``bt_odd_*``.
+        method: Margin removal method (see ``remove_margin``).
+
+    Returns:
+        Log loss, or ``nan`` without odds or outcomes.
+    """
+    frame = _market_probability_frame(detailed_results, method)
+    if frame.empty:
+        return float("nan")
+    return _log_loss(frame)
+
+
+def _closing_line_frame(
+    detailed_results: pd.DataFrame,
+    method: MarginMethod = "multiplicative",
+) -> pd.DataFrame:
+    """Odds taken vs closing odds of the selected outcome on placed bets.
+
+    Args:
+        detailed_results: Backtest result rows with ``bt_closing_odd_*``.
+        method: Margin removal method for the fair closing probability.
+
+    Returns:
+        Frame with ``odds`` (taken), ``close`` (raw closing odds of the
+        selected outcome), and ``fair_p`` (margin-free closing
+        probability). Empty without closing columns or placed bets.
+    """
+    empty = pd.DataFrame(columns=["odds", "close", "fair_p"])
+    bets = _filter_placed_bets(detailed_results)
+    close_cols = _numbered_columns(bets, "bt_closing_odd_")
+    if bets.empty or len(close_cols) < 2:
+        return empty
+    closing = (
+        bets[close_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+    )
+    fair = remove_margin(closing, method)
+    selected = bets["bt_bet_on"].to_numpy().astype(int)
+    in_range = selected < len(close_cols)
+    rows = np.arange(len(bets))[in_range]
+    cols = selected[in_range]
+    frame = pd.DataFrame(
+        {
+            "odds": pd.to_numeric(bets["bt_odds"], errors="coerce").to_numpy()[in_range],
+            "close": closing[rows, cols],
+            "fair_p": fair[rows, cols],
+        }
+    )
+    return frame.dropna(subset=["odds", "close"])
+
+
+def _has_closing_odds(detailed_results: pd.DataFrame) -> bool:
+    return len(_numbered_columns(detailed_results, "bt_closing_odd_")) >= 2
+
+
+def calculate_clv(
+    detailed_results: pd.DataFrame,
+    no_vig: bool = False,
+    method: MarginMethod = "multiplicative",
+) -> float:
+    """Calculate mean closing line value of placed bets, in percent.
+
+    Raw CLV per bet is ``odds_taken / closing_odds - 1`` on the selected
+    outcome. No-vig CLV is ``odds_taken * fair_closing_p - 1``: the
+    expected return per unit if the margin-free closing line is the true
+    probability. Positive CLV means you got better prices than the
+    reference line. The reference is whatever ``closing_odds_columns``
+    held in the backtest; it does not have to be the literal close.
+
+    Args:
+        detailed_results: Backtest result rows with ``bt_closing_odd_*``.
+        no_vig: Use the margin-free closing probability.
+        method: Margin removal method when ``no_vig`` is True.
+
+    Returns:
+        Mean CLV in percent. ``nan`` without closing odds; ``0.0`` if no
+        bets were placed.
+
+    Example:
+        Took 2.20, closed 2.00 at ``[2.00, 1.90]``: raw ``+10%``;
+        multiplicative fair p ``0.4872`` → no-vig ``2.2 * 0.4872 - 1 ≈ +7.2%``.
+    """
+    if not _has_closing_odds(detailed_results):
+        return float("nan")
+    if _filter_placed_bets(detailed_results).empty:
+        return 0.0
+    frame = _closing_line_frame(detailed_results, method)
+    if no_vig:
+        frame = frame.dropna(subset=["fair_p"])
+        values = frame["odds"] * frame["fair_p"] - 1.0
+    else:
+        values = frame["odds"] / frame["close"] - 1.0
+    if values.empty:
+        return float("nan")
+    return float(values.mean() * 100)
+
+
+def calculate_beat_closing_line(detailed_results: pd.DataFrame) -> float:
+    """Calculate the share of placed bets taken above the closing odds.
+
+    Args:
+        detailed_results: Backtest result rows with ``bt_closing_odd_*``.
+
+    Returns:
+        Percent of placed bets with ``odds_taken > closing_odds`` on the
+        selected outcome. ``nan`` without closing odds; ``0.0`` if no
+        bets were placed.
+    """
+    if not _has_closing_odds(detailed_results):
+        return float("nan")
+    if _filter_placed_bets(detailed_results).empty:
+        return 0.0
+    frame = _closing_line_frame(detailed_results)
+    if frame.empty:
+        return float("nan")
+    return float((frame["odds"] > frame["close"]).mean() * 100)
+
+
+def calculate_all_metrics(
+    detailed_results: pd.DataFrame,
+    margin_method: MarginMethod = "multiplicative",
+) -> Dict[str, Any]:
     """Calculate the full metrics dictionary for a backtest.
 
     Drawdown, win rate, odds, and stake stats use placed bets only.
@@ -1162,10 +1380,15 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
     model probability of the selected outcome. Brier / log-loss / ECE are
     reported twice: ``(placed)`` on the selected outcome of placed bets,
     ``(all games)`` on every outcome of every game. Both need
-    ``bt_model_prob_*``.
+    ``bt_model_prob_*``. The ``(market, all games)`` scores use the
+    margin-free odds instead and need no model.
+
+    CLV metrics need ``bt_closing_odd_*`` and are ``nan`` without them.
 
     Args:
         detailed_results: Full backtest result rows.
+        margin_method: Margin removal for no-vig CLV and the market
+            scores: ``multiplicative``, ``additive``, ``power``, ``shin``.
 
     Returns:
         Mapping of metric names to values.
@@ -1258,6 +1481,17 @@ def calculate_all_metrics(detailed_results: pd.DataFrame) -> Dict[str, Any]:
         ),
         "ECE (placed) [-]": calculate_ece(detailed_results),
         "ECE (all games) [-]": calculate_ece(detailed_results, scope="all"),
+        "Brier Score (market, all games) [-]": calculate_market_brier_score(
+            detailed_results, method=margin_method
+        ),
+        "Log Loss (market, all games) [-]": calculate_market_log_loss(
+            detailed_results, method=margin_method
+        ),
+        "CLV [%]": calculate_clv(detailed_results),
+        "CLV (no-vig) [%]": calculate_clv(
+            detailed_results, no_vig=True, method=margin_method
+        ),
+        "Beat Closing Line [%]": calculate_beat_closing_line(detailed_results),
         "Highest Winning Odds [-]": highest_winning_odds,
         "Highest Losing Odds [-]": highest_losing_odds,
         "Average Stake [$]": calculate_average_stake(bet_placed),

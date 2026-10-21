@@ -363,7 +363,10 @@ def plot_backtest(
             ann.xanchor = "center"
             ann.yshift = 22
 
-    names, values = _metric_table_cells(calculate_all_metrics(main_results))
+    margin_method = getattr(backtest, "margin_method", "multiplicative")
+    names, values = _metric_table_cells(
+        calculate_all_metrics(main_results, margin_method=margin_method)
+    )
     n_rows = len(names)
     stripe = ["#f4f6f8" if i % 2 else "#ffffff" for i in range(n_rows)]
     fig.update_layout(height=max(1400, 180 + n_rows * 26))

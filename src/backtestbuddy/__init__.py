@@ -10,6 +10,7 @@ from .strategies.sport_strategies import (
     ValueBet,
 )
 from .metrics.sport_metrics import calculate_all_metrics
+from .odds.margin import remove_margin
 from .plots.sport_plots import (
     plot_backtest,
     plot_calibration,
@@ -27,7 +28,8 @@ __all__ = [
     "UnitStake",
     "OddsFilter",
     "calculate_all_metrics",
-    "plot_backtest",
+    "remove_margin",
+"plot_backtest",
     "plot_calibration",
     "plot_odds_histogram",
 ]

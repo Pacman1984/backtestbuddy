@@ -132,8 +132,23 @@ def _ece(pairs):
     )
 
 
+def _fair(odds):
+    """Multiplicative margin removal for one market."""
+    implied = [1 / o for o in odds]
+    return [q / sum(implied) for q in implied]
+
+
 def reference_metrics(rows, n_outcomes):
     placed = _placed(rows)
+    market_pairs = [
+        (p, 1.0 if r["bt_actual_outcome"] == k else 0.0)
+        for r in rows
+        for k, p in enumerate(_fair([r[f"bt_odd_{i}"] for i in range(n_outcomes)]))
+    ]
+    closing = [
+        (r["bt_odds"], [r[f"bt_closing_odd_{i}"] for i in range(n_outcomes)], int(r["bt_bet_on"]))
+        for r in placed
+    ]
     stake = sum(r["bt_stake"] for r in placed)
     profit = sum(r["bt_profit"] for r in placed)
     selected = [
@@ -195,6 +210,15 @@ def reference_metrics(rows, n_outcomes):
         "Log Loss (all games) [-]": logloss(all_pairs),
         "ECE (placed) [-]": _ece(placed_pairs),
         "ECE (all games) [-]": _ece(all_pairs),
+        "Brier Score (market, all games) [-]": brier(market_pairs),
+        "Log Loss (market, all games) [-]": logloss(market_pairs),
+        "CLV [%]": _mean([taken / close[k] - 1 for taken, close, k in closing]) * 100,
+        "CLV (no-vig) [%]": _mean(
+            [taken * _fair(close)[k] - 1 for taken, close, k in closing]
+        ) * 100,
+        "Beat Closing Line [%]": _mean(
+            [1.0 if taken > close[k] else 0.0 for taken, close, k in closing]
+        ) * 100,
         "Highest Winning Odds [-]": max(r["bt_odds"] for r in placed if r["bt_win"]),
         "Highest Losing Odds [-]": max(r["bt_odds"] for r in placed if not r["bt_win"]),
         "Average Stake [$]": stake / len(placed),
@@ -227,8 +251,11 @@ def random_backtest(seed):
         "outcome": [rng.choice(n_outcomes, p=p) for p in true_p],
         "pred": model_p.argmax(axis=1),
     })
+    # Closing line drifts a few percent away from the odds taken
+    closing = np.round(odds * np.exp(rng.normal(0, 0.04, odds.shape)), 2).clip(1.01)
     for k in range(n_outcomes):
         data[f"odds_{k}"] = odds[:, k]
+        data[f"close_{k}"] = closing[:, k]
         data[f"p_{k}"] = model_p[:, k]
     strategy = [
         KellyCriterion(0.5, 0.1),
@@ -245,6 +272,7 @@ def random_backtest(seed):
         "pred",
         strategy=strategy,
         model_prob_columns=[f"p_{k}" for k in range(n_outcomes)],
+        closing_odds_columns=[f"close_{k}" for k in range(n_outcomes)],
     )
     backtest.run()
     return backtest.detailed_results, n_outcomes

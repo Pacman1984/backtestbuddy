@@ -1,5 +1,7 @@
 # BacktestBuddy
 
+[![Tests](https://github.com/Pacman1984/backtestbuddy/actions/workflows/tests.yml/badge.svg)](https://github.com/Pacman1984/backtestbuddy/actions/workflows/tests.yml)
+
 Backtest sports-betting strategies in Python: a sequential bankroll simulation over your historical odds, with staking strategies, risk metrics, closing line value, and interactive Plotly charts.
 
 Works with any data source: you pass a pandas DataFrame and tell BacktestBuddy which columns hold the odds, the outcome, the date, and your model output.
@@ -74,3 +76,14 @@ backtest.plot()  # interactive Plotly chart
 - [Changelog](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/changelog.md)
 
 Browse the docs locally with `pip install backtestbuddy[docs]` and `mkdocs serve`.
+
+## Development
+
+The project uses [uv](https://docs.astral.sh/uv/). From a clone of the repository:
+
+```bash
+uv run --extra test pytest          # full test suite, including every docs example
+uv run --extra docs mkdocs serve    # docs at http://127.0.0.1:8000
+```
+
+GitHub Actions runs the tests on Python 3.9 to 3.13 and builds the docs for every pull request.

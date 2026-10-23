@@ -10,5 +10,6 @@ nav:
       - Metrics Module: metrics-module.md
       - Odds Module: odds-module.md
       - Plots Module: plots-module.md
+  - Hyperparameter Tuning: tuning.md
   - Examples: examples.md
   - Changelog: changelog.md

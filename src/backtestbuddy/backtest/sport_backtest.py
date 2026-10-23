@@ -7,7 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from sklearn.model_selection import TimeSeriesSplit
 
-from backtestbuddy.metrics.sport_metrics import calculate_all_metrics
+from backtestbuddy.metrics.sport_metrics import calculate_all_metrics, calculate_metrics
 from backtestbuddy.odds.margin import MARGIN_METHODS
 from backtestbuddy.plots.sport_plots import (
     plot_backtest,
@@ -59,16 +59,20 @@ class _ResultColumns:
 
     def add(self, row: Dict[str, Any]) -> None:
         """Append one result row."""
+        columns = self.columns
+        n_rows = self.n_rows
         for key, value in row.items():
-            column = self.columns.get(key)
+            column = columns.get(key)
             if column is None:
-                column = self.columns[key] = [np.nan] * self.n_rows
-                self.first_row[key] = self.n_rows
+                column = columns[key] = [np.nan] * n_rows
+                self.first_row[key] = n_rows
             column.append(value)
-        self.n_rows += 1
-        for column in self.columns.values():
-            if len(column) < self.n_rows:
-                column.append(np.nan)
+        self.n_rows = n_rows + 1
+        # Backfill only when this row lacks a column (rare: strategy info missing on some rows)
+        if len(row) != len(columns):
+            for column in columns.values():
+                if len(column) == n_rows:
+                    column.append(np.nan)
 
     def to_frame(self, original: pd.DataFrame) -> pd.DataFrame:
         """Build the results and attach the original data columns.
@@ -283,7 +287,7 @@ class BaseBacktest(ABC):
             raise ValueError("Backtest has not been run yet. Call run() first.")
         return self.bookie_results
 
-    def _simulate_bet(self, fold: int, index: int, prediction: int, bet_on: int, actual_outcome: int, odds: List[float], current_bankroll: float, stake: float, model_probs: Optional[List[float]] = None, closing_odds: Optional[List[float]] = None, **additional_info: Any) -> Dict[str, Any]:
+    def _simulate_bet(self, fold: int, index: int, prediction: int, bet_on: int, actual_outcome: int, odds: List[float], current_bankroll: float, stake: float, model_probs: Optional[List[float]] = None, closing_odds: Optional[List[float]] = None, _lean: bool = False, **additional_info: Any) -> Dict[str, Any]:
         """
         Process a bet by placing it, simulating its outcome, and generating the result.
 
@@ -299,6 +303,7 @@ class BaseBacktest(ABC):
             model_probs (Optional[List[float]]): The model's predicted probabilities for each outcome.
             closing_odds (Optional[List[float]]): Reference odds for each outcome, stored as
                 ``bt_closing_odd_{i}``.
+            _lean (bool): Return only the columns metrics read (used by ``evaluate``).
             **additional_info: Additional information to be included in the result.
 
         Returns:
@@ -361,6 +366,29 @@ class BaseBacktest(ABC):
         # Update bankroll
         ending_bankroll = current_bankroll + outcome['bt_profit']
 
+        if _lean:
+            # Same values as the full row, but only the columns that metrics read
+            result = {
+                'bt_bet_on': bet_on,
+                'bt_actual_outcome': actual_outcome,
+                'bt_starting_bankroll': current_bankroll,
+                'bt_ending_bankroll': ending_bankroll,
+                'bt_odds': odds[bet_on] if bet_on != -1 else None,
+                'bt_win': outcome['bt_win'],
+                'bt_profit': outcome['bt_profit'],
+                'bt_stake': stake,
+                'bt_date_column': self._dates[index],
+            }
+            for i, odd in enumerate(odds):
+                result[f'bt_odd_{i}'] = odd
+            if model_probs:
+                for i, prob in enumerate(model_probs):
+                    result[f'bt_model_prob_{i}'] = prob
+            if closing_odds is not None:
+                for i, odd in enumerate(closing_odds):
+                    result[f'bt_closing_odd_{i}'] = odd
+            return result
+
         # Generate the complete result
         result = {
             'bt_index': index,
@@ -415,11 +443,16 @@ class BaseBacktest(ABC):
         if slot:
             yield slot
 
-    def _simulate(self, rows: List[_BetRow]) -> None:
-        """Bet on every prepared row and store results, bookie results, and history.
+    def _simulate(self, rows: List[_BetRow], lean: bool = False) -> Tuple[pd.DataFrame, Optional[pd.DataFrame], BetHistory]:
+        """Bet on every prepared row.
 
         Args:
             rows: Matches in betting order with their predictions and odds.
+            lean: Skip the bookie benchmark and the original data columns
+                (used by ``evaluate``); the ``bt_*`` columns are identical.
+
+        Returns:
+            ``(detailed_results, bookie_results or None, history)``.
         """
         all_results = _ResultColumns()
         bookie_results = _ResultColumns()
@@ -459,10 +492,15 @@ class BaseBacktest(ABC):
                     if stake <= 0:
                         stake, bet_on = 0.0, -1
                 closing = self._row_values(closing_columns, row.position)
-                result = self._simulate_bet(row.fold, row.index, row.prediction, bet_on, row.outcome, row.odds,
-                                            current_bankroll, stake, model_probs=row.probs, closing_odds=closing,
-                                            **additional_info)
-                if simultaneous:
+                if lean:
+                    result = self._simulate_bet(row.fold, row.index, row.prediction, bet_on, row.outcome, row.odds,
+                                                current_bankroll, stake, model_probs=row.probs, closing_odds=closing,
+                                                _lean=True)
+                else:
+                    result = self._simulate_bet(row.fold, row.index, row.prediction, bet_on, row.outcome, row.odds,
+                                                current_bankroll, stake, model_probs=row.probs, closing_odds=closing,
+                                                **additional_info)
+                if simultaneous and not lean:
                     result['bt_sizing_bankroll'] = slot_bankroll
                 current_bankroll = result['bt_ending_bankroll']
                 if simultaneous:
@@ -471,6 +509,8 @@ class BaseBacktest(ABC):
                     self._record_bet(history, result)
                 all_results.add(result)
 
+                if lean:
+                    continue
                 bookie_result = self._simulate_bookie_bet(
                     row.fold, row.index, row.odds, row.outcome, bookie_bankroll, closing_odds=closing,
                     sizing_bankroll=slot_bookie_bankroll if simultaneous else None,
@@ -483,11 +523,56 @@ class BaseBacktest(ABC):
             for result in settled:
                 self._record_bet(history, result)
 
+        if lean:
+            return all_results.to_frame(self.data.iloc[:len(rows), :0]), None, history
         # Original columns are attached once instead of copied into every row
         original = self.data.iloc[[row.position for row in rows]]
-        self.detailed_results = all_results.to_frame(original)
-        self.bookie_results = bookie_results.to_frame(original)
-        self.history = history
+        return all_results.to_frame(original), bookie_results.to_frame(original), history
+
+    def _prepare_rows(self) -> List[_BetRow]:
+        """Predictions and odds for every match to bet on, in betting order."""
+        raise NotImplementedError
+
+    def _run_rows(self) -> None:
+        """Simulate the prepared rows and store results, bookie results, and history."""
+        self.detailed_results, self.bookie_results, self.history = self._simulate(self._prepare_rows())
+
+    def evaluate(self,
+                 metrics: Union[str, Sequence[str]] = "Yield [%]",
+                 min_bets: Optional[int] = None,
+                 fallback: float = float("nan")) -> Union[float, Any, Dict[str, Any]]:
+        """
+        Run the backtest and return only the requested metrics, as fast as possible.
+
+        Made for hyperparameter searches (e.g. Optuna), where a backtest runs hundreds or
+        thousands of times and only an objective value matters. It skips the bookie
+        benchmark, the original data columns, and every metric that was not asked for.
+        The values are identical to ``run()`` followed by ``calculate_metrics()``.
+        Results of an earlier ``run()`` on this object are left untouched.
+
+        Args:
+            metrics (str | Sequence[str]): One key of ``calculate_metrics()`` or a list of keys.
+            min_bets (Optional[int]): If fewer bets were placed, return ``fallback`` instead.
+                Guards an optimizer against settings that win with a handful of lucky bets.
+            fallback (float): Returned (per metric) when ``min_bets`` is not met. Defaults to
+                NaN, which Optuna records as a failed trial.
+
+        Returns:
+            The metric value for a single key, else a dict of key to value.
+
+        Example:
+            >>> backtest.evaluate("Yield [%]", min_bets=200)
+            >>> backtest.evaluate(["Yield [%]", "Max Drawdown [%]"])
+        """
+        names = [metrics] if isinstance(metrics, str) else list(metrics)
+        results, _, _ = self._simulate(self._prepare_rows(), lean=True)
+        requested = names + (["Total Bets"] if min_bets is not None and "Total Bets" not in names else [])
+        values = calculate_metrics(results, requested, self.margin_method)
+        if min_bets is not None and values["Total Bets"] < min_bets:
+            values = {name: fallback for name in names}
+        if isinstance(metrics, str):
+            return values[metrics]
+        return {name: values[name] for name in names}
 
     def calculate_metrics(self) -> Dict[str, Any]:
         """
@@ -526,12 +611,10 @@ class BaseBacktest(ABC):
         for haircut in haircuts:
             if not 0 <= haircut < 1:
                 raise ValueError("Each haircut must be in [0, 1)")
-            # Shallow copy: data is shared read-only; run() replaces the result frames
+            # Shallow copy: data is shared read-only; evaluate() leaves results untouched
             trial = copy.copy(self)
             trial.odds_haircut = haircut
-            trial.run()
-            summary = calculate_all_metrics(trial.detailed_results, margin_method=self.margin_method)
-            rows[haircut] = {name: summary[name] for name in metrics}
+            rows[haircut] = trial.evaluate(list(metrics))
         table = pd.DataFrame.from_dict(rows, orient="index")
         table.index.name = "odds_haircut"
         return table
@@ -727,6 +810,10 @@ class ModelBacktest(BaseBacktest):
         It uses the model to make predictions, applies the betting strategy,
         and populates self.detailed_results with the outcomes.
         """
+        self._run_rows()
+
+    def _prepare_rows(self) -> List[_BetRow]:
+        """Train and predict every fold; return the test rows in betting order."""
         self._dates = self.data[self.date_column].tolist()
         rows: List[_BetRow] = []
 
@@ -770,7 +857,7 @@ class ModelBacktest(BaseBacktest):
                 probs_list = probs.tolist() if isinstance(probs, np.ndarray) else list(probs)
                 rows.append(_BetRow(fold, test_index[i], test_index[i], prediction, probs_list, odds, outcomes[i]))
 
-        self._simulate(rows)
+        return rows
        
 
 
@@ -864,6 +951,10 @@ class PredictionBacktest(BaseBacktest):
         This approach allows for a more realistic simulation of a betting strategy's performance
         over time, as it would be applied in a real-world scenario.
         """
+        self._run_rows()
+
+    def _prepare_rows(self) -> List[_BetRow]:
+        """Predictions, probabilities, and odds of every row, in date order."""
         # Convert every needed column to Python values once; the loop then only indexes lists
         self._dates = self.data[self.date_column].tolist()
         predictions = self.data[self.prediction_column].tolist()
@@ -871,9 +962,8 @@ class PredictionBacktest(BaseBacktest):
         odds_columns = self._column_values(self.odds_columns)
         prob_columns = self._column_values(self.model_prob_columns) if self.model_prob_columns else None
 
-        rows = [
+        return [
             _BetRow(0, i, i, predictions[i], self._row_values(prob_columns, i),
                     self._bet_odds(self._row_values(odds_columns, i)), outcomes[i])
             for i in range(len(self.data))
         ]
-        self._simulate(rows)

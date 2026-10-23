@@ -6,6 +6,7 @@ copying them into a notebook. A run backtest is pre-seeded as
 ``backtest`` because reference pages assume one exists. Blocks that do
 not compile (signature listings) are skipped. Plots are not displayed.
 """
+import importlib.util
 import re
 from pathlib import Path
 
@@ -46,6 +47,9 @@ def _seed_backtest():
 def _runnable_blocks(path):
     blocks = []
     for index, source in enumerate(PYTHON_BLOCK.findall(path.read_text(encoding="utf-8"))):
+        optional = [name for name in ("optuna",) if f"import {name}" in source]
+        if any(importlib.util.find_spec(name) is None for name in optional):
+            continue  # optional dependency not installed here; CI installs it with the test extra
         try:
             code = compile(source, f"{path.name}[block {index}]", "exec")
         except SyntaxError:

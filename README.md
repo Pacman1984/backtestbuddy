@@ -18,6 +18,7 @@ Works with any data source: you pass a pandas DataFrame and tell BacktestBuddy w
 - **Closing line value**: compare the odds you took with any later or sharper line.
 - **Margin removal**: multiplicative, additive, power, and Shin methods.
 - **Odds stress test**: re-run with 1%, 2%, 3% worse odds to see how robust the edge is.
+- **Hyperparameter tuning**: `evaluate()` returns only the metrics an optimizer like Optuna needs, several times faster than a full run, plus a holdout split helper.
 - **Charts**: bankroll and drawdown, reliability diagram, odds distribution.
 
 ## Installation
@@ -74,6 +75,7 @@ backtest.plot()  # interactive Plotly chart
 - [Strategies Module](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/strategies-module.md)
 - [Metrics Module](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/metrics-module.md): every metric with its formula
 - [Odds Module](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/odds-module.md): margin removal
+- [Hyperparameter Tuning](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/tuning.md): fast `evaluate()`, holdout split, Optuna recipe
 - [Plots Module](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/plots-module.md)
 - [Examples](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/examples.md)
 - [Changelog](https://github.com/Pacman1984/backtestbuddy/blob/master/docs/changelog.md)

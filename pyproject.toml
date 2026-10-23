@@ -54,12 +54,14 @@ dev = [
     "ruff>=0.1.0",
     "jupyter>=1.0.0",
     "ipykernel>=6.0.0",
+    "optuna>=3.4",
 ]
 
-# Testing dependencies (subset of dev)
+# Testing dependencies (subset of dev); optuna runs the tuning recipe in the docs
 test = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "optuna>=3.4",
 ]
 
 # Documentation dependencies

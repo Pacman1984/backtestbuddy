@@ -49,6 +49,7 @@
 | `get_bookie_results()` | DataFrame | Same for the favourite benchmark. |
 | `history` (attribute) | `BetHistory` | Ledger of the bets settled in the last `run()`; see [Strategies with memory](strategies-module.md#strategies-with-memory-bethistory). |
 | `calculate_metrics()` | dict | All metrics; also stored in `.metrics`. Uses `margin_method`. |
+| `evaluate(metrics="Yield [%]", min_bets=None, fallback=nan)` | value or dict | Runs the backtest and returns only the requested metrics, several times faster than `run()` plus all metrics, with identical values. For optimizers; see [Hyperparameter Tuning](tuning.md). Leaves earlier `run()` results untouched. |
 | `stress_test(haircuts=(0, 0.01, 0.02, 0.03), metrics=...)` | DataFrame | Re-runs with each haircut; one row per haircut. Leaves this backtest's results unchanged. |
 | `plot(x_axis="bet", show_bookie=True)` | `None` | Shows the bankroll chart. Use `plot_backtest(backtest)` to get the figure object. |
 | `plot_calibration(n_bins=None, scope="placed")` | Figure | Reliability diagram; `scope="all"` uses every game. |

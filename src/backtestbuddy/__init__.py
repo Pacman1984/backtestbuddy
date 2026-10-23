@@ -29,8 +29,9 @@ from .strategies.toolkit import (
     Strategy,
     UnitPlan,
 )
-from .metrics.sport_metrics import calculate_all_metrics
+from .metrics.sport_metrics import METRIC_NAMES, calculate_all_metrics, calculate_metrics
 from .odds.margin import remove_margin
+from .tuning import split_by_date
 from .plots.sport_plots import (
     plot_backtest,
     plot_calibration,
@@ -70,8 +71,11 @@ __all__ = [
     # Memory
     "BetHistory",
     "SettledBet",
-    # Metrics, odds, plots
+    # Metrics, odds, tuning, plots
     "calculate_all_metrics",
+    "calculate_metrics",
+    "METRIC_NAMES",
+    "split_by_date",
     "remove_margin",
     "plot_backtest",
     "plot_calibration",

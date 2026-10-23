@@ -36,8 +36,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
 
       - name: Run tests on minimum versions
-        # -p no:cov: the oldest pytest-cov is irrelevant to the package and can fail to import
-        run: uv run --python 3.9 --resolution lowest-direct --extra test pytest -p no:cov
+        # Only the package's own floors matter here, so test tools come via --with
+        # (no optuna: the docs tuning recipe is skipped in this job and runs in the matrix)
+        run: uv run --python 3.9 --resolution lowest-direct --with "pytest>=7" pytest -p no:cov
 
   docs:
     name: Docs build

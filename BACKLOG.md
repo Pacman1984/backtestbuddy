@@ -6,25 +6,9 @@ Status: 🟢 ready to build · 🟡 needs a design decision · ⚪ idea
 
 ---
 
-## 🟢 Fast evaluation for hyperparameter search (Optuna)
-
-**Why.** Tuning strategy and stake parameters with Optuna means hundreds to thousands of backtests. Measured on 10,000 matches: one trial costs about 1.2 s today (run plus all 49 metrics); a lean loop with the same Kelly logic plus one metric takes about 0.07 s, roughly 15x less. 2,000 trials drop from about 40 to about 3 minutes.
-
-**Design.**
-
-- `backtest.evaluate(metric="Yield [%]", min_bets=None)`: same simulation as `run()`, but without the bookie benchmark and the results DataFrame, computing only the requested metric(s). A lean fast path for the preset strategies; custom strategies take the normal path but still skip the overhead.
-- `split_by_date(data, holdout_from=...)` helper and an Optuna recipe in the docs: optimize on a training period, check once on an untouched holdout, use a robust objective (minimum number of bets, drawdown penalty, optional stress haircut). Many trials on one history otherwise mostly find luck.
-- Two-stage workflow for `ModelBacktest`: tune the model on log loss, store out-of-fold probabilities once, then tune strategy parameters on `PredictionBacktest` with those probabilities.
-
-**Must hold.** `evaluate()` returns exactly the numbers `run()` plus `calculate_all_metrics()` would; the metric reference test covers both paths.
-
-**Effort.** Medium.
-
----
-
 ## ⚪ Optional compiled kernel (numba, Rust only if needed)
 
-**Why.** Only relevant if `evaluate()` is still too slow for very large searches or Monte Carlo runs.
+**Why.** Only relevant if `evaluate()` (0.13–0.25 s per trial on 10,000 matches) is still too slow for very large searches or Monte Carlo runs. A lean loop without per-match Python objects measured about 0.07 s with Kelly.
 
 **Design.** Step 1: numba kernels for the preset strategies behind an optional extra (`pip install backtestbuddy[fast]`). Step 2, only if numba is not enough: a Rust core via PyO3/maturin, same API. Custom Python strategies always keep the Python path, since a per-bet call from Rust back into Python would cancel most of the gain.
 

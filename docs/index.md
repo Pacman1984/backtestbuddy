@@ -25,6 +25,7 @@ It works with any data source. Every input is a column name you pass in, so the 
 | Know exactly how a metric is computed | [Metrics Module](metrics-module.md) |
 | Remove the margin from odds | [Odds Module](odds-module.md) |
 | Customize or export charts | [Plots Module](plots-module.md) |
+| Tune strategy parameters with Optuna | [Hyperparameter Tuning](tuning.md) |
 | Copy a complete script | [Examples](examples.md) |
 
 ## Installation

@@ -65,10 +65,16 @@ class BetHistory:
         self._staked_by_day: Dict[pd.Timestamp, float] = {}
         self._profit_by_day: Dict[pd.Timestamp, float] = {}
         self._day_start_bankroll: Dict[pd.Timestamp, float] = {}
+        self._last_date: Any = None
+        self._last_day: Optional[pd.Timestamp] = None
 
-    @staticmethod
-    def _day(date: Any) -> pd.Timestamp:
-        return pd.Timestamp(date).normalize()
+    def _day(self, date: Any) -> pd.Timestamp:
+        """Calendar day of ``date``; consecutive calls with one date are cached."""
+        if date is self._last_date or (self._last_day is not None and date == self._last_date):
+            return self._last_day
+        day = pd.Timestamp(date).normalize()
+        self._last_date, self._last_day = date, day
+        return day
 
     def record(
         self,

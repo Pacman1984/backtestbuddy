@@ -1,12 +1,19 @@
-"""Betting strategies for sports backtests.
+"""Ready-made betting strategies for sports backtests.
 
 FixedStake sizes bets as a constant amount or as a fraction of the
 *current* bankroll. KellyCriterion sizes bets from the decimal-odds Kelly
 fraction, scaled by ``downscaling`` and capped by ``max_bet``. ValueBet
 selects the highest expected-value outcome above ``min_ev``. UnitStake
-implements unit-loss, unit-win, and unit-impact plans. OddsFilter restricts
-an inner strategy to an odds band. RiskLimits caps and pauses an inner
-strategy using the run's ``BetHistory``.
+implements unit-loss, unit-win, and unit-impact plans.
+EdgeProportionalStake stakes in proportion to the edge. OddsFilter
+restricts an inner strategy to an odds band. RiskLimits caps and pauses an
+inner strategy using the run's ``BetHistory``.
+
+FixedStake, KellyCriterion, ValueBet, UnitStake, and EdgeProportionalStake
+are preset combinations of the toolkit in
+``backtestbuddy.strategies.toolkit`` (a selector plus a sizer). Their
+constructors, attributes, methods, and results are unchanged; attributes
+such as ``downscaling`` can still be reassigned after construction.
 
 Stake sizes are explicit: ``amount=`` is currency, ``fraction=`` is a share
 of the current bankroll. The older single ``stake=`` argument still works
@@ -14,188 +21,43 @@ of the current bankroll. The older single ``stake=`` argument still works
 and ``1.0`` mean very different bets.
 """
 
-import warnings
-from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-import numpy as np
-
+from backtestbuddy.strategies.base import BaseStrategy
 from backtestbuddy.strategies.history import BetHistory
+from backtestbuddy.strategies.toolkit import (
+    EdgeProportional,
+    HighestEV,
+    HighestKelly,
+    KellySize,
+    ModelPick,
+    StakeSize,
+    Strategy,
+    UnitPlan,
+    cap_stake,
+    expected_value,
+    kelly_fraction,
+)
+
+# Former private helpers, kept importable for existing code
+_expected_value = expected_value
+_cap_stake = cap_stake
+
+__all__ = [
+    "BaseStrategy",
+    "StakeSize",
+    "FixedStake",
+    "KellyCriterion",
+    "ValueBet",
+    "UnitStake",
+    "EdgeProportionalStake",
+    "OddsFilter",
+    "RiskLimits",
+    "get_default_strategy",
+]
 
 
-class StakeSize:
-    """How much to stake: a fixed amount or a fraction of the bankroll.
-
-    Exactly one of ``amount`` and ``fraction`` is set.
-
-    Attributes:
-        amount: Currency amount per bet, capped at the current bankroll.
-        fraction: Share of the current bankroll per bet, in ``[0, 1]``.
-
-    Example:
-        >>> StakeSize(fraction=0.02).resolve(1000)
-        20.0
-        >>> StakeSize(amount=0.5).resolve(1000)  # half a unit, not 50%
-        0.5
-    """
-
-    def __init__(
-        self, amount: Optional[float] = None, fraction: Optional[float] = None
-    ):
-        """Create a stake size.
-
-        Args:
-            amount: Currency amount, ``>= 0``.
-            fraction: Bankroll fraction in ``[0, 1]``.
-
-        Raises:
-            ValueError: If both or neither are given, or a value is out of
-                range.
-        """
-        if (amount is None) == (fraction is None):
-            raise ValueError("Pass exactly one of amount= or fraction=")
-        if amount is not None and amount < 0:
-            raise ValueError("amount must be non-negative")
-        if fraction is not None and not 0 <= fraction <= 1:
-            raise ValueError("fraction must be in [0, 1]")
-        self.amount = amount
-        self.fraction = fraction
-
-    @classmethod
-    def from_arguments(
-        cls,
-        owner: str,
-        stake: Optional[float] = None,
-        amount: Optional[float] = None,
-        fraction: Optional[float] = None,
-        default_amount: Optional[float] = None,
-        stacklevel: int = 3,
-    ) -> "StakeSize":
-        """Build a stake size from a strategy's constructor arguments.
-
-        Args:
-            owner: Strategy name for messages.
-            stake: Legacy argument: below 1 is a fraction, else an amount.
-                Emits a ``DeprecationWarning``.
-            amount: Explicit amount.
-            fraction: Explicit fraction.
-            default_amount: Used when nothing is given; ``None`` makes a
-                size mandatory.
-            stacklevel: Warning stack level so it points at user code.
-
-        Returns:
-            The resolved stake size.
-
-        Raises:
-            ValueError: If more than one argument is given, a mandatory
-                size is missing, or a value is out of range.
-        """
-        if sum(value is not None for value in (stake, amount, fraction)) > 1:
-            raise ValueError(f"{owner}: pass only one of stake=, amount=, fraction=")
-        if stake is not None:
-            if stake < 0:
-                raise ValueError("stake must be non-negative")
-            warnings.warn(
-                f"{owner}(stake={stake!r}) is ambiguous: values below 1 are a "
-                "bankroll fraction, 1 and above a currency amount. Use "
-                "amount=... or fraction=... instead.",
-                DeprecationWarning,
-                stacklevel=stacklevel,
-            )
-            return cls(fraction=stake) if stake < 1 else cls(amount=stake)
-        if amount is None and fraction is None:
-            if default_amount is None:
-                raise ValueError(f"{owner} needs amount=... or fraction=...")
-            return cls(amount=default_amount)
-        return cls(amount=amount, fraction=fraction)
-
-    def resolve(self, bankroll: float) -> float:
-        """Stake for the given current bankroll."""
-        if self.fraction is not None:
-            return bankroll * self.fraction
-        return min(self.amount, bankroll)
-
-    @property
-    def value(self) -> float:
-        """The configured number: the amount or the fraction."""
-        return self.amount if self.amount is not None else self.fraction
-
-    def __str__(self) -> str:
-        if self.fraction is not None:
-            return f"{self.fraction:.2%} of current bankroll"
-        return f"${self.amount:.2f}"
-
-
-class BaseStrategy(ABC):
-    """Abstract base class for betting strategies."""
-
-    @abstractmethod
-    def calculate_stake(
-        self, odds: List[float], bankroll: float, **kwargs: Any
-    ) -> float:
-        """Calculate the stake for a bet.
-
-        Args:
-            odds: Decimal odds for each possible outcome.
-            bankroll: Current bankroll.
-            **kwargs: Strategy-specific options (e.g. model_probs).
-
-        Returns:
-            Stake in currency units.
-        """
-        pass
-
-    @abstractmethod
-    def select_bet(
-        self,
-        odds: List[float],
-        model_probs: Optional[List[float]] = None,
-        prediction: Optional[int] = None,
-        **kwargs: Any,
-    ) -> int:
-        """Select the outcome index to bet on.
-
-        Args:
-            odds: Decimal odds for each possible outcome.
-            model_probs: Model probabilities aligned with ``odds``.
-            prediction: Predicted outcome index.
-            **kwargs: Strategy-specific options.
-
-        Returns:
-            Outcome index, or ``-1`` to skip the bet.
-        """
-        pass
-
-    @abstractmethod
-    def get_bet_details(
-        self,
-        odds: List[float],
-        bankroll: float,
-        model_probs: Optional[List[float]] = None,
-        prediction: Optional[int] = None,
-        **kwargs: Any,
-    ) -> Tuple[float, int, Dict[str, Any]]:
-        """Return stake, selected outcome, and strategy metadata.
-
-        Args:
-            odds: Decimal odds for each possible outcome.
-            bankroll: Current bankroll.
-            model_probs: Model probabilities aligned with ``odds``.
-            prediction: Predicted outcome index.
-            **kwargs: Strategy-specific options.
-
-        Returns:
-            ``(stake, bet_on, additional_info)``. ``bet_on`` is ``-1`` when
-            stake is 0.
-        """
-        stake = self.calculate_stake(
-            odds, bankroll, model_probs=model_probs, **kwargs
-        )
-        bet_on = self.select_bet(odds, model_probs, prediction, **kwargs)
-        return stake, bet_on if stake > 0 else -1, {}
-
-
-class FixedStake(BaseStrategy):
+class FixedStake(Strategy):
     """Flat amount or constant fraction of the current bankroll.
 
     - ``FixedStake(amount=10)``: 10 currency units per bet, capped at the
@@ -204,10 +66,13 @@ class FixedStake(BaseStrategy):
     - ``FixedStake(10)`` / ``FixedStake(0.02)``: legacy form, still
       supported; below 1 is a fraction, 1 and above an amount. Warns.
 
+    Outcome: highest model probability, else the prediction, else the
+    favourite (``ModelPick`` + ``StakeSize``).
+
     Attributes:
         size: The ``StakeSize``.
-        stake: The configured number (amount or fraction), kept for
-            backward compatibility.
+        stake: The configured number (amount or fraction). Assigning a new
+            number applies the legacy rule.
     """
 
     def __init__(
@@ -228,54 +93,26 @@ class FixedStake(BaseStrategy):
             ValueError: If no size or more than one is given, or a value
                 is negative or out of range.
         """
-        self.size = StakeSize.from_arguments(
+        size = StakeSize.from_arguments(
             "FixedStake", stake=stake, amount=amount, fraction=fraction
         )
-        self.stake = self.size.value
+        super().__init__(select=ModelPick(), size=size)
 
-    def calculate_stake(
-        self,
-        odds: List[float],
-        bankroll: float,
-        model_probs: Optional[List[float]] = None,
-        **kwargs: Any,
-    ) -> float:
-        """Calculate the stake from current bankroll.
+    @property
+    def size(self) -> StakeSize:
+        return self.sizer
 
-        Args:
-            odds: Unused; present for the strategy interface.
-            bankroll: Current bankroll.
-            model_probs: Unused.
-            **kwargs: Unused.
+    @property
+    def stake(self) -> float:
+        return self.sizer.value
 
-        Returns:
-            Fraction of current bankroll, or min(amount, bankroll).
-        """
-        return self.size.resolve(bankroll)
+    @stake.setter
+    def stake(self, value: float) -> None:
+        self.sizer = StakeSize.from_arguments("FixedStake", stake=value)
 
-    def select_bet(
-        self,
-        odds: List[float],
-        model_probs: Optional[List[float]] = None,
-        prediction: Optional[int] = None,
-        **kwargs: Any,
-    ) -> int:
-        """Select an outcome: model probs, else prediction, else favorite.
-
-        Args:
-            odds: Decimal odds; favorite is the lowest-odds outcome.
-            model_probs: If provided, bet on the highest probability.
-            prediction: Used when model probabilities are not provided.
-            **kwargs: Unused.
-
-        Returns:
-            Outcome index.
-        """
-        if model_probs:
-            return model_probs.index(max(model_probs))
-        if prediction is not None:
-            return prediction
-        return odds.index(min(odds))
+    def _legacy_bet(self, odds, bankroll, model_probs, prediction, kwargs):
+        stake = self.calculate_stake(odds, bankroll, model_probs=model_probs)
+        return stake, self.select_bet(odds, model_probs, prediction)
 
     def get_bet_details(
         self,
@@ -292,29 +129,25 @@ class FixedStake(BaseStrategy):
             current_bankroll: Current bankroll.
             model_probs: Model probabilities aligned with ``odds``.
             prediction: Predicted outcome index.
-            **kwargs: Unused.
+            **kwargs: ``history`` and ``date`` from the backtest; unused.
 
         Returns:
             ``(stake, bet_on, {})``.
         """
-        stake = self.calculate_stake(
-            odds, current_bankroll, model_probs=model_probs
-        )
-        bet_on = self.select_bet(odds, model_probs, prediction)
-        if stake == 0:
-            bet_on = -1
-        return stake, bet_on, {}
+        return super().get_bet_details(odds, current_bankroll, model_probs, prediction, **kwargs)
 
     def __str__(self) -> str:
         return f"Fixed Stake Strategy ({self.size})"
 
 
-class KellyCriterion(BaseStrategy):
+class KellyCriterion(Strategy):
     """Bet the (scaled, capped) Kelly fraction of current bankroll.
 
     Kelly fraction for decimal odds: ``f* = (p*(odds-1) - (1-p)) / (odds-1)``.
     Negative or undefined fractions (including ``odds <= 1``) are treated as
-    0. The stake is ``min(f* * downscaling, max_bet) * bankroll``.
+    0. The stake is ``min(f* * downscaling, max_bet) * bankroll`` on the
+    outcome with the highest Kelly fraction (``HighestKelly`` +
+    ``KellySize``).
 
     Bookie simulations call ``calculate_stake`` without model probabilities;
     this strategy then stakes 0. Kelly is not a valid bookie benchmark.
@@ -352,10 +185,43 @@ class KellyCriterion(BaseStrategy):
             raise ValueError("downscaling must be non-negative")
         if not 0 <= max_bet <= 1:
             raise ValueError("max_bet must be in [0, 1]")
-        self.downscaling = downscaling
-        self.max_bet = max_bet
-        self.min_kelly = min_kelly
-        self.min_prob = min_prob
+        # Bound method: a subclass override of calculate_kelly_fraction is honored
+        super().__init__(
+            select=HighestKelly(min_kelly, min_prob, kelly_fn=self.calculate_kelly_fraction),
+            size=KellySize(downscaling, max_bet, min_kelly, min_prob, kelly_fn=self.calculate_kelly_fraction),
+        )
+
+    @property
+    def downscaling(self) -> float:
+        return self.sizer.fraction
+
+    @downscaling.setter
+    def downscaling(self, value: float) -> None:
+        self.sizer.fraction = value
+
+    @property
+    def max_bet(self) -> float:
+        return self.sizer.max_bet
+
+    @max_bet.setter
+    def max_bet(self, value: float) -> None:
+        self.sizer.max_bet = value
+
+    @property
+    def min_kelly(self) -> float:
+        return self.selector.min_kelly
+
+    @min_kelly.setter
+    def min_kelly(self, value: float) -> None:
+        self.selector.min_kelly = self.sizer.min_kelly = value
+
+    @property
+    def min_prob(self) -> float:
+        return self.selector.min_prob
+
+    @min_prob.setter
+    def min_prob(self, value: float) -> None:
+        self.selector.min_prob = self.sizer.min_prob = value
 
     def calculate_kelly_fraction(self, odds: float, prob: float) -> float:
         """Calculate the full Kelly fraction for one outcome.
@@ -370,121 +236,7 @@ class KellyCriterion(BaseStrategy):
         Example:
             odds=2.0, prob=0.6 → ``(0.6*1 - 0.4)/1 = 0.2``.
         """
-        adj_odds = odds - 1
-        if adj_odds <= 0 or not np.isfinite(adj_odds) or not np.isfinite(prob):
-            return 0.0
-        kelly = (prob * adj_odds - (1 - prob)) / adj_odds
-        return max(0.0, kelly)
-
-    def calculate_stake(
-        self,
-        odds: List[float],
-        bankroll: float,
-        model_probs: Optional[List[float]] = None,
-        **kwargs: Any,
-    ) -> float:
-        """Calculate the Kelly stake for the selected outcome.
-
-        Args:
-            odds: Decimal odds for each outcome.
-            bankroll: Current bankroll.
-            model_probs: Required; stake is 0 if missing.
-            **kwargs: Passed to ``select_bet``.
-
-        Returns:
-            Stake in currency units, or 0 if no bet.
-        """
-        if model_probs is None:
-            return 0.0
-
-        bet_on = self.select_bet(odds, model_probs, **kwargs)
-        if bet_on == -1:
-            return 0.0
-
-        kelly_fraction = self.calculate_kelly_fraction(
-            odds[bet_on], model_probs[bet_on]
-        )
-
-        if model_probs[bet_on] < self.min_prob:
-            return 0.0
-
-        if kelly_fraction > self.min_kelly:
-            return (
-                min(kelly_fraction * self.downscaling, self.max_bet) * bankroll
-            )
-
-        return 0.0
-
-    def select_bet(
-        self,
-        odds: List[float],
-        model_probs: Optional[List[float]] = None,
-        prediction: Optional[int] = None,
-        **kwargs: Any,
-    ) -> int:
-        """Select the outcome with the highest Kelly fraction.
-
-        Args:
-            odds: Decimal odds for each outcome.
-            model_probs: Model probabilities aligned with ``odds``.
-            prediction: Unused; Kelly uses probabilities, not a class label.
-            **kwargs: Unused.
-
-        Returns:
-            Outcome index, or ``-1`` if no valid bet.
-        """
-        if model_probs is None:
-            return -1
-        kelly_fractions = [
-            self.calculate_kelly_fraction(odd, prob)
-            for odd, prob in zip(odds, model_probs)
-        ]
-        max_kelly = max(kelly_fractions)
-        if max_kelly <= self.min_kelly:
-            return -1
-        best_idx = kelly_fractions.index(max_kelly)
-        if model_probs[best_idx] < self.min_prob:
-            return -1
-        return best_idx
-
-    def get_bet_details(
-        self,
-        odds: List[float],
-        bankroll: float,
-        model_probs: Optional[List[float]] = None,
-        prediction: Optional[int] = None,
-        **kwargs: Any,
-    ) -> Tuple[float, int, Dict[str, Any]]:
-        """Return stake, selected outcome, and per-outcome Kelly fractions.
-
-        Args:
-            odds: Decimal odds for each outcome.
-            bankroll: Current bankroll.
-            model_probs: Model probabilities aligned with ``odds``.
-            prediction: Unused by Kelly selection.
-            **kwargs: Passed to stake calculation.
-
-        Returns:
-            ``(stake, bet_on, {kelly_fraction_i: ...})``.
-        """
-        kelly_fractions = []
-        if model_probs:
-            kelly_fractions = [
-                self.calculate_kelly_fraction(odd, prob)
-                for odd, prob in zip(odds, model_probs)
-            ]
-
-        stake = self.calculate_stake(
-            odds, bankroll, model_probs=model_probs, **kwargs
-        )
-        bet_on = self.select_bet(odds, model_probs, prediction, **kwargs)
-        if stake == 0:
-            bet_on = -1
-
-        additional_info = {
-            f"kelly_fraction_{i}": kf for i, kf in enumerate(kelly_fractions)
-        }
-        return stake, bet_on, additional_info
+        return kelly_fraction(odds, prob)
 
     def __str__(self) -> str:
         return (
@@ -494,42 +246,14 @@ class KellyCriterion(BaseStrategy):
         )
 
 
-def _expected_value(odds: float, prob: float) -> float:
-    """Return ``p * odds - 1`` for one outcome.
-
-    Args:
-        odds: Decimal odds.
-        prob: Win probability.
-
-    Returns:
-        Expected value of a 1-unit stake. ``-inf`` if inputs are invalid.
-
-    Example:
-        odds=2.0, prob=0.6 → ``0.2``.
-    """
-    if (
-        odds <= 0
-        or not np.isfinite(odds)
-        or not np.isfinite(prob)
-    ):
-        return float("-inf")
-    return float(prob * odds - 1.0)
-
-
-def _cap_stake(stake: float, bankroll: float) -> float:
-    """Return a non-negative stake that does not exceed bankroll."""
-    if stake <= 0 or bankroll <= 0:
-        return 0.0
-    return float(min(stake, bankroll))
-
-
-class ValueBet(BaseStrategy):
+class ValueBet(Strategy):
     """Bet only when expected value exceeds ``min_ev``.
 
     EV of an outcome is ``p * odds - 1``. Among outcomes with EV strictly
     greater than ``min_ev``, the highest EV is selected. The stake is an
     ``amount=`` or a ``fraction=`` of the current bankroll, as in
-    FixedStake; the default is an amount of 1.
+    FixedStake; the default is an amount of 1 (``HighestEV`` +
+    ``StakeSize``).
 
     Requires ``model_probs``. Without them the stake is 0, so this is not
     a valid bookie benchmark.
@@ -568,110 +292,41 @@ class ValueBet(BaseStrategy):
             ValueError: If more than one size is given or a value is out
                 of range.
         """
-        self.size = StakeSize.from_arguments(
+        size = StakeSize.from_arguments(
             "ValueBet", stake=stake, amount=amount, fraction=fraction,
             default_amount=1.0,
         )
-        self.min_ev = min_ev
-        self.stake = self.size.value
+        super().__init__(select=HighestEV(min_ev), size=size)
 
-    def calculate_stake(
-        self,
-        odds: List[float],
-        bankroll: float,
-        model_probs: Optional[List[float]] = None,
-        **kwargs: Any,
-    ) -> float:
-        """Return the FixedStake-style size if a value bet exists.
+    @property
+    def min_ev(self) -> float:
+        return self.selector.min_ev
 
-        Args:
-            odds: Decimal odds for each outcome.
-            bankroll: Current bankroll.
-            model_probs: Required; stake is 0 if missing.
-            **kwargs: Passed to ``select_bet``.
+    @min_ev.setter
+    def min_ev(self, value: float) -> None:
+        self.selector.min_ev = value
 
-        Returns:
-            Stake in currency units, or 0 if no bet.
-        """
-        if self.select_bet(odds, model_probs, **kwargs) == -1:
-            return 0.0
-        return self.size.resolve(bankroll)
+    @property
+    def size(self) -> StakeSize:
+        return self.sizer
 
-    def select_bet(
-        self,
-        odds: List[float],
-        model_probs: Optional[List[float]] = None,
-        prediction: Optional[int] = None,
-        **kwargs: Any,
-    ) -> int:
-        """Select the highest-EV outcome above ``min_ev``.
+    @property
+    def stake(self) -> float:
+        return self.sizer.value
 
-        Args:
-            odds: Decimal odds for each outcome.
-            model_probs: Model probabilities aligned with ``odds``.
-            prediction: Unused; selection is by EV, not a class label.
-            **kwargs: Unused.
+    @stake.setter
+    def stake(self, value: float) -> None:
+        self.sizer = StakeSize.from_arguments("ValueBet", stake=value)
 
-        Returns:
-            Outcome index, or ``-1`` if no outcome clears ``min_ev``.
-        """
-        if model_probs is None or len(model_probs) != len(odds):
-            return -1
-        values = [
-            _expected_value(odd, prob)
-            for odd, prob in zip(odds, model_probs)
-        ]
-        best = max(values)
-        if best <= self.min_ev:
-            return -1
-        return values.index(best)
-
-    def get_bet_details(
-        self,
-        odds: List[float],
-        bankroll: float,
-        model_probs: Optional[List[float]] = None,
-        prediction: Optional[int] = None,
-        **kwargs: Any,
-    ) -> Tuple[float, int, Dict[str, Any]]:
-        """Return stake, selected outcome, and per-outcome EV.
-
-        Args:
-            odds: Decimal odds for each outcome.
-            bankroll: Current bankroll.
-            model_probs: Model probabilities aligned with ``odds``.
-            prediction: Unused.
-            **kwargs: Passed to stake calculation.
-
-        Returns:
-            ``(stake, bet_on, {ev_i: ...})``.
-        """
-        evs: List[float] = []
-        if model_probs and len(model_probs) == len(odds):
-            evs = [
-                _expected_value(odd, prob)
-                for odd, prob in zip(odds, model_probs)
-            ]
-        stake = self.calculate_stake(
-            odds,
-            bankroll,
-            model_probs=model_probs,
-            prediction=prediction,
-            **kwargs,
-        )
-        bet_on = self.select_bet(odds, model_probs, prediction, **kwargs)
-        if stake == 0:
-            bet_on = -1
-        additional_info = {f"ev_{i}": ev for i, ev in enumerate(evs)}
-        return stake, bet_on, additional_info
+    def _legacy_bet(self, odds, bankroll, model_probs, prediction, kwargs):
+        stake = self.calculate_stake(odds, bankroll, model_probs=model_probs, prediction=prediction, **kwargs)
+        return stake, self.select_bet(odds, model_probs, prediction, **kwargs)
 
     def __str__(self) -> str:
-        return (
-            f"ValueBet Strategy (min_ev={self.min_ev}, stake={self.stake})"
-        )
+        return f"ValueBet Strategy (min_ev={self.min_ev}, stake={self.stake})"
 
 
-class UnitStake(BaseStrategy):
+class UnitStake(Strategy):
     """Cortés unit-loss, unit-win, or unit-impact staking.
 
     Selection matches FixedStake (max prob, else prediction, else favorite).
@@ -707,105 +362,95 @@ class UnitStake(BaseStrategy):
         Raises:
             ValueError: If ``plan`` is unknown or ``unit`` is not positive.
         """
-        if plan not in ("loss", "win", "impact"):
-            raise ValueError(
-                f"plan must be 'loss', 'win', or 'impact', got {plan!r}"
-            )
-        if unit <= 0:
-            raise ValueError("unit must be positive")
-        self.unit = unit
-        self.plan = plan
+        super().__init__(select=ModelPick(), size=UnitPlan(unit, plan))
 
-    def calculate_stake(
-        self,
-        odds: List[float],
-        bankroll: float,
-        model_probs: Optional[List[float]] = None,
-        **kwargs: Any,
-    ) -> float:
-        """Calculate the unit-plan stake for the selected outcome.
+    @property
+    def unit(self) -> float:
+        return self.sizer.unit
 
-        Args:
-            odds: Decimal odds for each outcome.
-            bankroll: Current bankroll.
-            model_probs: Optional; used only for selection.
-            **kwargs: Passed to ``select_bet``.
+    @unit.setter
+    def unit(self, value: float) -> None:
+        self.sizer.unit = value
 
-        Returns:
-            Stake in currency units, or 0 if no bet.
-        """
-        bet_on = self.select_bet(odds, model_probs, **kwargs)
-        if bet_on == -1:
-            return 0.0
-        selected = odds[bet_on]
-        if self.plan == "loss":
-            return _cap_stake(self.unit, bankroll)
-        if self.plan == "win":
-            if selected <= 1:
-                return 0.0
-            return _cap_stake(self.unit / (selected - 1), bankroll)
-        if selected <= 0:
-            return 0.0
-        return _cap_stake(self.unit / selected, bankroll)
+    @property
+    def plan(self) -> str:
+        return self.sizer.plan
 
-    def select_bet(
-        self,
-        odds: List[float],
-        model_probs: Optional[List[float]] = None,
-        prediction: Optional[int] = None,
-        **kwargs: Any,
-    ) -> int:
-        """Select an outcome: model probs, else prediction, else favorite.
+    @plan.setter
+    def plan(self, value: str) -> None:
+        self.sizer.plan = value
 
-        Args:
-            odds: Decimal odds; favorite is the lowest-odds outcome.
-            model_probs: If provided, bet on the highest probability.
-            prediction: Used when model probabilities are not provided.
-            **kwargs: Unused.
-
-        Returns:
-            Outcome index.
-        """
-        if model_probs:
-            return model_probs.index(max(model_probs))
-        if prediction is not None:
-            return prediction
-        return odds.index(min(odds))
-
-    def get_bet_details(
-        self,
-        odds: List[float],
-        bankroll: float,
-        model_probs: Optional[List[float]] = None,
-        prediction: Optional[int] = None,
-        **kwargs: Any,
-    ) -> Tuple[float, int, Dict[str, Any]]:
-        """Return stake, selected outcome, and plan metadata.
-
-        Args:
-            odds: Decimal odds for each outcome.
-            bankroll: Current bankroll.
-            model_probs: Model probabilities aligned with ``odds``.
-            prediction: Predicted outcome index.
-            **kwargs: Passed to stake calculation.
-
-        Returns:
-            ``(stake, bet_on, {plan, unit})``.
-        """
-        stake = self.calculate_stake(
-            odds,
-            bankroll,
-            model_probs=model_probs,
-            prediction=prediction,
-            **kwargs,
-        )
-        bet_on = self.select_bet(odds, model_probs, prediction, **kwargs)
-        if stake == 0:
-            bet_on = -1
-        return stake, bet_on, {"plan": self.plan, "unit": self.unit}
+    def _legacy_bet(self, odds, bankroll, model_probs, prediction, kwargs):
+        stake = self.calculate_stake(odds, bankroll, model_probs=model_probs, prediction=prediction, **kwargs)
+        return stake, self.select_bet(odds, model_probs, prediction, **kwargs)
 
     def __str__(self) -> str:
         return f"UnitStake Strategy (unit={self.unit}, plan={self.plan})"
+
+
+class EdgeProportionalStake(Strategy):
+    """Bet the highest-EV outcome with a stake proportional to its edge.
+
+    Selects like ValueBet (highest ``p * odds - 1`` above ``min_ev``) and
+    stakes ``min(multiplier * edge, max_fraction) * bankroll``
+    (``HighestEV`` + ``EdgeProportional``). Larger edges get larger bets,
+    with less variance than Kelly.
+
+    Example:
+        ``EdgeProportionalStake(min_ev=0.02, multiplier=0.5, max_fraction=0.05)``:
+        edge 6% → 3% of the bankroll; edge 20% → capped at 5%.
+
+    Attributes:
+        min_ev: Minimum expected value to place a bet.
+        multiplier: Bankroll share per unit of edge.
+        max_fraction: Cap as a bankroll share.
+        requires_probabilities: Always ``True``.
+    """
+
+    requires_probabilities = True
+
+    def __init__(self, min_ev: float = 0.0, multiplier: float = 0.5, max_fraction: float = 0.05):
+        """Initialize the selection threshold and sizing.
+
+        Args:
+            min_ev: Skip outcomes with EV at or below this threshold.
+            multiplier: Bankroll share per unit of edge, ``> 0``.
+            max_fraction: Cap as a bankroll share, ``(0, 1]``.
+
+        Raises:
+            ValueError: If ``multiplier`` or ``max_fraction`` is out of range.
+        """
+        super().__init__(select=HighestEV(min_ev), size=EdgeProportional(multiplier, max_fraction))
+
+    @property
+    def min_ev(self) -> float:
+        return self.selector.min_ev
+
+    @min_ev.setter
+    def min_ev(self, value: float) -> None:
+        self.selector.min_ev = value
+
+    @property
+    def multiplier(self) -> float:
+        return self.sizer.multiplier
+
+    @multiplier.setter
+    def multiplier(self, value: float) -> None:
+        self.sizer.multiplier = value
+
+    @property
+    def max_fraction(self) -> float:
+        return self.sizer.max_fraction
+
+    @max_fraction.setter
+    def max_fraction(self, value: float) -> None:
+        self.sizer.max_fraction = value
+
+    def __str__(self) -> str:
+        return (
+            f"EdgeProportionalStake Strategy (min_ev={self.min_ev}, "
+            f"multiplier={self.multiplier}, max_fraction={self.max_fraction})"
+        )
 
 
 class OddsFilter(BaseStrategy):
@@ -985,6 +630,10 @@ class OddsFilter(BaseStrategy):
         if inner_on < 0 or stake == 0:
             return 0.0, -1, info
         return stake, eligible[inner_on], info
+
+    def adjust_simultaneous(self, stakes: List[float], bankroll: float) -> List[float]:
+        """Delegates to the inner strategy."""
+        return self.inner.adjust_simultaneous(stakes, bankroll)
 
     def __str__(self) -> str:
         return (
@@ -1211,6 +860,16 @@ class RiskLimits(BaseStrategy):
         if limited <= 0:
             return 0.0, -1, info
         return limited, bet_on, info
+
+    def adjust_simultaneous(self, stakes: List[float], bankroll: float) -> List[float]:
+        """Let the inner strategy rescale, then drop stakes below ``min_stake``.
+
+        Rescaling only shrinks stakes, so the other caps still hold.
+        """
+        adjusted = self.inner.adjust_simultaneous(stakes, bankroll)
+        if self.min_stake is None:
+            return adjusted
+        return [0.0 if 0 < stake < self.min_stake else stake for stake in adjusted]
 
     def __str__(self) -> str:
         limits = {

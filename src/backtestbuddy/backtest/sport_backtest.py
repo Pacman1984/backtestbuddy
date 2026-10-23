@@ -32,6 +32,59 @@ STRESS_TEST_METRICS = (
 )
 
 
+class _ResultColumns:
+    """Collect result rows column by column and build the DataFrame once.
+
+    Equivalent to ``pd.DataFrame(list_of_row_dicts)``: columns appear in the
+    order they are first seen, and rows that lack a column get NaN. Building
+    from column lists avoids the per-row dict merging that dominated runtime.
+    """
+
+    def __init__(self) -> None:
+        self.columns: Dict[str, List[Any]] = {}
+        self.first_row: Dict[str, int] = {}
+        self.n_rows = 0
+
+    def add(self, row: Dict[str, Any]) -> None:
+        """Append one result row."""
+        for key, value in row.items():
+            column = self.columns.get(key)
+            if column is None:
+                column = self.columns[key] = [np.nan] * self.n_rows
+                self.first_row[key] = self.n_rows
+            column.append(value)
+        self.n_rows += 1
+        for column in self.columns.values():
+            if len(column) < self.n_rows:
+                column.append(np.nan)
+
+    def to_frame(self, original: pd.DataFrame) -> pd.DataFrame:
+        """Build the results and attach the original data columns.
+
+        Column order matches the former per-row ``dict.update`` plus
+        ``pd.DataFrame(list_of_dicts)``: result columns of the first row,
+        then the data columns, then result columns first seen in a later
+        row (e.g. strategy info missing on early rows). A data column with
+        the same name as a result column replaces it in place.
+
+        Args:
+            original: Data rows in processing order, one per result row.
+
+        Returns:
+            Results DataFrame with a default RangeIndex.
+        """
+        original = original.reset_index(drop=True)
+        early = [c for c in self.columns if self.first_row[c] == 0]
+        late = [c for c in self.columns if self.first_row[c] > 0]
+        frame = pd.DataFrame({c: self.columns[c] for c in early})
+        for column in original.columns:
+            frame[column] = original[column]
+        for column in late:
+            if column not in original.columns:
+                frame[column] = self.columns[column]
+        return frame
+
+
 class BaseBacktest(ABC):
     """
     Abstract base class for backtesting strategies.
@@ -166,11 +219,22 @@ class BaseBacktest(ABC):
                 won=bool(result['bt_win']),
             )
 
-    def _closing_odds(self, row: Dict[str, Any]) -> Optional[List[float]]:
-        """Closing odds of one data row, or None without closing columns."""
-        if self.closing_odds_columns is None:
+    def _column_values(self, columns: Optional[List[str]]) -> Optional[List[List[Any]]]:
+        """Python values of each column, converted once before the loop.
+
+        ``Series.tolist`` returns the same Python types the old per-row
+        ``to_dict("records")`` produced, so strategies see identical inputs.
+        """
+        if columns is None:
             return None
-        return [row[col] for col in self.closing_odds_columns]
+        return [self.data[col].tolist() for col in columns]
+
+    @staticmethod
+    def _row_values(columns: Optional[List[List[Any]]], position: int) -> Optional[List[Any]]:
+        """Values of one row across pre-converted columns, or None."""
+        if columns is None:
+            return None
+        return [values[position] for values in columns]
 
     def get_detailed_results(self) -> pd.DataFrame:
         """
@@ -291,7 +355,7 @@ class BaseBacktest(ABC):
             **outcome,
             'bt_stake': stake,
             'bt_potential_return': potential_return,
-            'bt_date_column': self.data[self.date_column].iat[index],
+            'bt_date_column': self._dates[index],
         }
 
         # Add individual odds for each outcome
@@ -466,7 +530,7 @@ class BaseBacktest(ABC):
             'bt_profit': profit,
             'bt_roi': roi,
             'bt_odds': odds[bet_on],  # Add the odds for the bet placed
-            'bt_date_column': self.data[self.date_column].iat[index],
+            'bt_date_column': self._dates[index],
         }
 
         # Add individual odds for each outcome
@@ -544,12 +608,15 @@ class ModelBacktest(BaseBacktest):
         It uses the model to make predictions, applies the betting strategy,
         and populates self.detailed_results with the outcomes.
         """
-        all_results = []
-        bookie_results = []
+        all_results = _ResultColumns()
+        bookie_results = _ResultColumns()
+        positions: List[np.ndarray] = []
         current_bankroll = self.initial_bankroll
         bookie_bankroll = self.initial_bankroll
         # Fresh ledger per run, so repeated runs (stress_test) never share state
         history = BetHistory(self.initial_bankroll)
+        self._dates = self.data[self.date_column].tolist()
+        closing_columns = self._column_values(self.closing_odds_columns)
 
         # Define feature columns, excluding date and outcome columns unless set explicitly
         feature_columns = self.feature_columns or [col for col in self.data.columns if col not in [self.date_column, self.outcome_column]]
@@ -580,7 +647,7 @@ class ModelBacktest(BaseBacktest):
             # Convert once per fold; per-row .iloc lookups dominate runtime otherwise
             odds_rows = [self._bet_odds(row) for row in X_test[self.odds_columns].to_numpy(dtype=float).tolist()]
             outcomes = y_test.tolist()
-            records = X_test.to_dict("records")
+            positions.append(test_index)
 
             for i, (prediction, probs) in enumerate(zip(predictions, probabilities)):
                 odds = odds_rows[i]
@@ -593,29 +660,26 @@ class ModelBacktest(BaseBacktest):
                 # Convert probs to a list if it's not already
                 probs_list = probs.tolist() if isinstance(probs, np.ndarray) else list(probs)
                 
+                position = test_index[i]
                 bet_details = self.strategy.get_bet_details(odds, current_bankroll, model_probs=probs_list, prediction=prediction,
-                                                            history=history, date=records[i][self.date_column])
+                                                            history=history, date=self._dates[position])
                 stake, bet_on, additional_info = bet_details
 
-                closing = self._closing_odds(records[i])
+                closing = self._row_values(closing_columns, position)
                 result = self._simulate_bet(fold, test_index[i], prediction, bet_on, actual_outcome, odds, current_bankroll, stake, model_probs=probs_list, closing_odds=closing, **additional_info)
                 current_bankroll = result['bt_ending_bankroll']
                 self._record_bet(history, result)
-                
-                # Add all original features to the result
-                result.update(records[i])
-                all_results.append(result)
+                all_results.add(result)
 
                 # Simulate bookie bet
                 bookie_result = self._simulate_bookie_bet(fold, test_index[i], odds, actual_outcome, bookie_bankroll, closing_odds=closing)
                 bookie_bankroll = bookie_result['bt_ending_bankroll']
-                
-                # Add all original features to the bookie result
-                bookie_result.update(records[i])
-                bookie_results.append(bookie_result)
+                bookie_results.add(bookie_result)
 
-        self.detailed_results = pd.DataFrame(all_results)
-        self.bookie_results = pd.DataFrame(bookie_results)
+        # Original columns are attached once instead of copied into every row
+        original = self.data.iloc[np.concatenate(positions)] if positions else self.data.iloc[:0]
+        self.detailed_results = all_results.to_frame(original)
+        self.bookie_results = bookie_results.to_frame(original)
         self.history = history
        
 
@@ -708,38 +772,41 @@ class PredictionBacktest(BaseBacktest):
         This approach allows for a more realistic simulation of a betting strategy's performance
         over time, as it would be applied in a real-world scenario.
         """
-        all_results = []
-        bookie_results = []
+        all_results = _ResultColumns()
+        bookie_results = _ResultColumns()
         current_bankroll = self.initial_bankroll
         bookie_bankroll = self.initial_bankroll
         # Fresh ledger per run, so repeated runs (stress_test) never share state
         history = BetHistory(self.initial_bankroll)
 
-        # to_dict("records") keeps per-column dtypes and is far faster than iterrows()
-        for i, row in enumerate(self.data.to_dict("records")):
-            prediction = row[self.prediction_column]
-            actual_outcome = row[self.outcome_column]
-            odds = self._bet_odds([row[col] for col in self.odds_columns])
-            closing = self._closing_odds(row)
-            model_probs = [row[col] for col in self.model_prob_columns] if self.model_prob_columns else None
+        # Convert every needed column to Python values once; the loop then only indexes lists
+        self._dates = self.data[self.date_column].tolist()
+        predictions = self.data[self.prediction_column].tolist()
+        outcomes = self.data[self.outcome_column].tolist()
+        odds_columns = self._column_values(self.odds_columns)
+        closing_columns = self._column_values(self.closing_odds_columns)
+        prob_columns = self._column_values(self.model_prob_columns) if self.model_prob_columns else None
+
+        for i in range(len(self.data)):
+            prediction = predictions[i]
+            actual_outcome = outcomes[i]
+            odds = self._bet_odds(self._row_values(odds_columns, i))
+            closing = self._row_values(closing_columns, i)
+            model_probs = self._row_values(prob_columns, i)
 
             bet_details = self.strategy.get_bet_details(odds, current_bankroll, model_probs=model_probs, prediction=prediction,
-                                                        history=history, date=row[self.date_column])
+                                                        history=history, date=self._dates[i])
             stake, bet_on, additional_info = bet_details
 
             result = self._simulate_bet(0, i, prediction, bet_on, actual_outcome, odds, current_bankroll, stake, model_probs=model_probs, closing_odds=closing, **additional_info)
             current_bankroll = result['bt_ending_bankroll']
             self._record_bet(history, result)
-            
-            result.update(row)
-            all_results.append(result)
+            all_results.add(result)
 
             bookie_result = self._simulate_bookie_bet(0, i, odds, actual_outcome, bookie_bankroll, closing_odds=closing)
             bookie_bankroll = bookie_result['bt_ending_bankroll']
-            
-            bookie_result.update(row)
-            bookie_results.append(bookie_result)
+            bookie_results.add(bookie_result)
 
-        self.detailed_results = pd.DataFrame(all_results)
-        self.bookie_results = pd.DataFrame(bookie_results)
+        self.detailed_results = all_results.to_frame(self.data)
+        self.bookie_results = bookie_results.to_frame(self.data)
         self.history = history

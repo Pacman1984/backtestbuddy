@@ -17,6 +17,7 @@
 | `closing_odds_columns` | `None` | Reference odds per outcome, same order as `odds_columns`, for CLV. Usually closing odds, but any later or sharper line works, e.g. opening odds as `odds_columns` and a late feed as the reference. |
 | `odds_haircut` | `0.0` | Lower every bet odd by this fraction (`0.02` = 2% worse). The strategy decides and bets settle at the lowered odds, floored at 1.0. Model features, probabilities, and closing odds are unchanged. Must be in `[0, 1)`. |
 | `margin_method` | `"multiplicative"` | Margin removal for no-vig CLV and the market baseline: `multiplicative`, `additive`, `power`, or `shin`. See the [Odds Module](odds-module.md). |
+| `settle_simultaneous` | `False` | Treat rows with the same date value as one slot of simultaneous matches: all bets of the slot are sized from the bankroll at its start, their total stake is capped at that bankroll, and they settle together. See [Simultaneous matches](#simultaneous-matches). |
 
 ### `PredictionBacktest` only
 
@@ -75,6 +76,7 @@
 | `bt_profit` | Profit of the bet; 0 if no bet |
 | `bt_roi` | Profit / stake in percent |
 | `bt_starting_bankroll`, `bt_ending_bankroll` | Bankroll before and after the match |
+| `bt_sizing_bankroll` | Bankroll the stake was sized from (only with `settle_simultaneous=True`) |
 | Strategy extras | e.g. `bt_kelly_fraction_{i}` (Kelly), `bt_ev_{i}` (ValueBet), `bt_plan` and `bt_unit` (UnitStake), `bt_risk_limit` (RiskLimits: the rule that changed or blocked the bet) |
 
 ## Stress test
@@ -107,3 +109,34 @@ print(backtest.stress_test(haircuts=[0, 0.01, 0.02, 0.03]))
 ```
 
 The table is indexed by `odds_haircut` and shows ROI, Yield, CAGR, Max Drawdown, Sharpe, Total Bets, and the final bankroll. Pass `metrics=[...]` with any keys of `calculate_metrics()` to choose other columns. Use it when the odds in your data are better than what you can actually get, for example opening odds with low limits.
+
+## Simultaneous matches
+
+By default rows settle one after another: with percentage staking, a later match on the same day is sized from a bankroll that already includes the result of an earlier one, which a real bettor could not know. With `settle_simultaneous=True`, rows that share the same date value form one **slot**:
+
+1. Every bet of the slot is decided from the bankroll at the start of the slot.
+2. The slot's total stake is capped at that bankroll, in row order.
+3. The strategy may rescale the slot's stakes (`SimultaneousKelly` caps their sum at `max_total`).
+4. The bets settle; their results reach `BetHistory` only after the whole slot.
+
+```python
+import pandas as pd
+import backtestbuddy as btb
+
+slate = pd.DataFrame({
+    "date": pd.to_datetime(["2023-01-01"] * 3 + ["2023-01-02"]),
+    "odds_a": [2.0] * 4, "odds_b": [2.0] * 4, "winner": [0, 1, 0, 0], "prediction": [0] * 4,
+    "prob_a": [0.6] * 4, "prob_b": [0.4] * 4,
+})
+backtest = btb.PredictionBacktest(
+    slate, ["odds_a", "odds_b"], "winner", "date", "prediction",
+    model_prob_columns=["prob_a", "prob_b"],
+    strategy=btb.Strategy(btb.HighestKelly(), btb.SimultaneousKelly(fraction=1.0, max_bet=0.2, max_total=0.3)),
+    settle_simultaneous=True,
+)
+backtest.run()
+print(backtest.detailed_results[["bt_date_column", "bt_sizing_bankroll", "bt_stake", "bt_profit"]])
+# Jan 1: three full-Kelly stakes of 20% would add up to 60%; each is scaled to 10% (total 30%)
+```
+
+Slots are defined by exact equality of the date values. With timestamps, matches at different kick-off times are separate slots; round the column (e.g. `df["date"].dt.floor("D")`) to group a whole day. `bt_starting_bankroll` and `bt_ending_bankroll` stay a running ledger within the slot, so bankroll curves, drawdowns, and per-period returns remain consistent.

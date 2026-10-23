@@ -1,6 +1,6 @@
 import copy
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterator, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -30,6 +30,18 @@ STRESS_TEST_METRICS = (
     "Total Bets",
     "Bankroll Final [$]",
 )
+
+
+class _BetRow(NamedTuple):
+    """Inputs for one match, prepared before the betting loop."""
+
+    fold: int
+    index: int
+    position: int
+    prediction: Any
+    probs: Optional[List[float]]
+    odds: List[float]
+    outcome: Any
 
 
 class _ResultColumns:
@@ -118,7 +130,8 @@ class BaseBacktest(ABC):
                  cv_schema: Optional[Any] = None,
                  closing_odds_columns: Optional[List[str]] = None,
                  odds_haircut: float = 0.0,
-                 margin_method: str = "multiplicative"):
+                 margin_method: str = "multiplicative",
+                 settle_simultaneous: bool = False):
         """
         Initialize the BaseBacktest.
 
@@ -141,6 +154,11 @@ class BaseBacktest(ABC):
                 floored at 1.0. Model features and closing odds are not changed. Defaults to 0.
             margin_method (str): How metrics remove the bookmaker margin: ``multiplicative``,
                 ``additive``, ``power``, or ``shin``. Defaults to ``multiplicative``.
+            settle_simultaneous (bool): Treat rows with the same date value as one slot of
+                simultaneous matches. All bets of a slot are sized from the bankroll at the
+                start of the slot, their total stake is capped at that bankroll, and they settle
+                together, so no bet can use the result of another match in the same slot.
+                Defaults to False (rows settle one after another).
 
         Raises:
             ValueError: If closing odds columns are missing or do not match ``odds_columns``
@@ -174,6 +192,7 @@ class BaseBacktest(ABC):
         self.closing_odds_columns = closing_odds_columns
         self.odds_haircut = odds_haircut
         self.margin_method = margin_method
+        self.settle_simultaneous = settle_simultaneous
 
     @abstractmethod
     def run(self) -> None:
@@ -377,6 +396,99 @@ class BaseBacktest(ABC):
         return result
 
 
+    def _slots(self, rows: List[_BetRow]) -> Iterator[List[_BetRow]]:
+        """Group rows into settlement slots.
+
+        Sequential mode yields one row per slot. Simultaneous mode groups
+        consecutive rows with the same date value (rows are date-sorted).
+        """
+        if not self.settle_simultaneous:
+            for row in rows:
+                yield [row]
+            return
+        slot: List[_BetRow] = []
+        for row in rows:
+            if slot and self._dates[row.position] != self._dates[slot[0].position]:
+                yield slot
+                slot = []
+            slot.append(row)
+        if slot:
+            yield slot
+
+    def _simulate(self, rows: List[_BetRow]) -> None:
+        """Bet on every prepared row and store results, bookie results, and history.
+
+        Args:
+            rows: Matches in betting order with their predictions and odds.
+        """
+        all_results = _ResultColumns()
+        bookie_results = _ResultColumns()
+        # Fresh ledger per run, so repeated runs (stress_test) never share state
+        history = BetHistory(self.initial_bankroll)
+        closing_columns = self._column_values(self.closing_odds_columns)
+        current_bankroll = self.initial_bankroll
+        bookie_bankroll = self.initial_bankroll
+        adjust = getattr(self.strategy, "adjust_simultaneous", None)
+
+        for slot in self._slots(rows):
+            simultaneous = self.settle_simultaneous
+            slot_bankroll = current_bankroll
+            slot_bookie_bankroll = bookie_bankroll
+
+            # Decide every bet of the slot before any of them settles
+            decisions = []
+            for row in slot:
+                stake, bet_on, additional_info = self.strategy.get_bet_details(
+                    row.odds, slot_bankroll, model_probs=row.probs, prediction=row.prediction,
+                    history=history, date=self._dates[row.position])
+                decisions.append([stake, bet_on, additional_info])
+            if simultaneous and adjust is not None:
+                adjusted = adjust([d[0] if d[1] != -1 else 0.0 for d in decisions], slot_bankroll)
+                for decision, stake in zip(decisions, adjusted):
+                    decision[0] = stake
+
+            available = slot_bankroll
+            bookie_available = slot_bookie_bankroll
+            settled = []
+            for row, (stake, bet_on, additional_info) in zip(slot, decisions):
+                if simultaneous:
+                    # Simultaneous bets cannot stake more than the slot's bankroll in total
+                    if bet_on != -1 and stake > 0:
+                        stake = min(stake, max(available, 0.0))
+                        available -= stake
+                    if stake <= 0:
+                        stake, bet_on = 0.0, -1
+                closing = self._row_values(closing_columns, row.position)
+                result = self._simulate_bet(row.fold, row.index, row.prediction, bet_on, row.outcome, row.odds,
+                                            current_bankroll, stake, model_probs=row.probs, closing_odds=closing,
+                                            **additional_info)
+                if simultaneous:
+                    result['bt_sizing_bankroll'] = slot_bankroll
+                current_bankroll = result['bt_ending_bankroll']
+                if simultaneous:
+                    settled.append(result)
+                else:
+                    self._record_bet(history, result)
+                all_results.add(result)
+
+                bookie_result = self._simulate_bookie_bet(
+                    row.fold, row.index, row.odds, row.outcome, bookie_bankroll, closing_odds=closing,
+                    sizing_bankroll=slot_bookie_bankroll if simultaneous else None,
+                    max_stake=max(bookie_available, 0.0) if simultaneous else None)
+                bookie_available -= bookie_result['bt_stake']
+                bookie_bankroll = bookie_result['bt_ending_bankroll']
+                bookie_results.add(bookie_result)
+
+            # Results of a simultaneous slot become visible to strategies only afterwards
+            for result in settled:
+                self._record_bet(history, result)
+
+        # Original columns are attached once instead of copied into every row
+        original = self.data.iloc[[row.position for row in rows]]
+        self.detailed_results = all_results.to_frame(original)
+        self.bookie_results = bookie_results.to_frame(original)
+        self.history = history
+
     def calculate_metrics(self) -> Dict[str, Any]:
         """
         Calculate performance metrics based on the backtest results.
@@ -475,7 +587,7 @@ class BaseBacktest(ABC):
         """
         return plot_odds_histogram(self, num_bins)
 
-    def _simulate_bookie_bet(self, fold: int, index: int, odds: List[float], actual_outcome: int, current_bankroll: float, closing_odds: Optional[List[float]] = None) -> Dict[str, Any]:
+    def _simulate_bookie_bet(self, fold: int, index: int, odds: List[float], actual_outcome: int, current_bankroll: float, closing_odds: Optional[List[float]] = None, sizing_bankroll: Optional[float] = None, max_stake: Optional[float] = None) -> Dict[str, Any]:
         """
         Simulate a bet using the bookie strategy (lowest-odds favorite).
 
@@ -491,13 +603,18 @@ class BaseBacktest(ABC):
             actual_outcome: Actual outcome index (0-based).
             current_bankroll: Bankroll before placing the bet.
             closing_odds: Reference odds for each outcome, if available.
+            sizing_bankroll: Bankroll the stake is sized from; defaults to
+                ``current_bankroll`` (differs only for simultaneous slots).
+            max_stake: Upper bound on the stake (unstaked funds of a slot).
 
         Returns:
             Result row for the bookie bet.
         """
         # For bookie strategy, we still bet on the lowest odds
         bet_on = odds.index(min(odds))
-        stake = self.strategy.calculate_stake(odds, current_bankroll)
+        stake = self.strategy.calculate_stake(odds, current_bankroll if sizing_bankroll is None else sizing_bankroll)
+        if max_stake is not None:
+            stake = min(stake, max_stake)
         potential_return = stake * odds[bet_on]
 
         if stake == 0:
@@ -568,7 +685,8 @@ class ModelBacktest(BaseBacktest):
                  feature_columns: Optional[List[str]] = None,
                  closing_odds_columns: Optional[List[str]] = None,
                  odds_haircut: float = 0.0,
-                 margin_method: str = "multiplicative"):
+                 margin_method: str = "multiplicative",
+                 settle_simultaneous: bool = False):
         """
         Initialize the ModelBacktester.
 
@@ -588,12 +706,13 @@ class ModelBacktest(BaseBacktest):
             closing_odds_columns (Optional[List[str]], optional): Reference odds for CLV.
             odds_haircut (float): Fraction by which bet odds are lowered. Defaults to 0.
             margin_method (str): Margin removal method for metrics.
+            settle_simultaneous (bool): Settle same-date rows as one slot. Defaults to False.
 
         Raises:
             ValueError: If a feature column is missing from the dataset.
         """
         super().__init__(data, odds_columns, outcome_column, date_column, initial_bankroll, model, strategy, cv_schema,
-                         closing_odds_columns, odds_haircut, margin_method)
+                         closing_odds_columns, odds_haircut, margin_method, settle_simultaneous)
         if feature_columns is not None:
             missing = [col for col in feature_columns if col not in data.columns]
             if missing:
@@ -608,19 +727,13 @@ class ModelBacktest(BaseBacktest):
         It uses the model to make predictions, applies the betting strategy,
         and populates self.detailed_results with the outcomes.
         """
-        all_results = _ResultColumns()
-        bookie_results = _ResultColumns()
-        positions: List[np.ndarray] = []
-        current_bankroll = self.initial_bankroll
-        bookie_bankroll = self.initial_bankroll
-        # Fresh ledger per run, so repeated runs (stress_test) never share state
-        history = BetHistory(self.initial_bankroll)
         self._dates = self.data[self.date_column].tolist()
-        closing_columns = self._column_values(self.closing_odds_columns)
+        rows: List[_BetRow] = []
 
         # Define feature columns, excluding date and outcome columns unless set explicitly
         feature_columns = self.feature_columns or [col for col in self.data.columns if col not in [self.date_column, self.outcome_column]]
 
+        # Train and predict every fold first; betting never feeds back into the model
         for fold, (train_index, test_index) in enumerate(self.cv_schema.split(self.data)):
             X_train, X_test = self.data.iloc[train_index], self.data.iloc[test_index]
             y_train, y_test = X_train[self.outcome_column], X_test[self.outcome_column]
@@ -647,40 +760,17 @@ class ModelBacktest(BaseBacktest):
             # Convert once per fold; per-row .iloc lookups dominate runtime otherwise
             odds_rows = [self._bet_odds(row) for row in X_test[self.odds_columns].to_numpy(dtype=float).tolist()]
             outcomes = y_test.tolist()
-            positions.append(test_index)
 
             for i, (prediction, probs) in enumerate(zip(predictions, probabilities)):
                 odds = odds_rows[i]
-                actual_outcome = outcomes[i]
-
                 # Ensure probs match the number of odds
                 if len(probs) != len(odds):
                     raise ValueError(f"Number of probabilities ({len(probs)}) doesn't match number of odds ({len(odds)})")
-                
                 # Convert probs to a list if it's not already
                 probs_list = probs.tolist() if isinstance(probs, np.ndarray) else list(probs)
-                
-                position = test_index[i]
-                bet_details = self.strategy.get_bet_details(odds, current_bankroll, model_probs=probs_list, prediction=prediction,
-                                                            history=history, date=self._dates[position])
-                stake, bet_on, additional_info = bet_details
+                rows.append(_BetRow(fold, test_index[i], test_index[i], prediction, probs_list, odds, outcomes[i]))
 
-                closing = self._row_values(closing_columns, position)
-                result = self._simulate_bet(fold, test_index[i], prediction, bet_on, actual_outcome, odds, current_bankroll, stake, model_probs=probs_list, closing_odds=closing, **additional_info)
-                current_bankroll = result['bt_ending_bankroll']
-                self._record_bet(history, result)
-                all_results.add(result)
-
-                # Simulate bookie bet
-                bookie_result = self._simulate_bookie_bet(fold, test_index[i], odds, actual_outcome, bookie_bankroll, closing_odds=closing)
-                bookie_bankroll = bookie_result['bt_ending_bankroll']
-                bookie_results.add(bookie_result)
-
-        # Original columns are attached once instead of copied into every row
-        original = self.data.iloc[np.concatenate(positions)] if positions else self.data.iloc[:0]
-        self.detailed_results = all_results.to_frame(original)
-        self.bookie_results = bookie_results.to_frame(original)
-        self.history = history
+        self._simulate(rows)
        
 
 
@@ -711,7 +801,8 @@ class PredictionBacktest(BaseBacktest):
                  model_prob_columns: Optional[List[str]] = None,
                  closing_odds_columns: Optional[List[str]] = None,
                  odds_haircut: float = 0.0,
-                 margin_method: str = "multiplicative"):
+                 margin_method: str = "multiplicative",
+                 settle_simultaneous: bool = False):
         """
         Initialize the PredictionBacktester.
 
@@ -731,13 +822,14 @@ class PredictionBacktest(BaseBacktest):
             closing_odds_columns (Optional[List[str]], optional): Reference odds for CLV.
             odds_haircut (float): Fraction by which bet odds are lowered. Defaults to 0.
             margin_method (str): Margin removal method for metrics.
+            settle_simultaneous (bool): Settle same-date rows as one slot. Defaults to False.
 
         Raises:
             ValueError: If the specified prediction_column is not found in the dataset.
             ValueError: If the strategy requires model probabilities but model_prob_columns is not provided.
         """
         super().__init__(data, odds_columns, outcome_column, date_column, initial_bankroll, None, strategy, None,
-                         closing_odds_columns, odds_haircut, margin_method)
+                         closing_odds_columns, odds_haircut, margin_method, settle_simultaneous)
         
         if prediction_column not in data.columns:
             raise ValueError(f"Prediction column '{prediction_column}' not found in the dataset.")
@@ -772,41 +864,16 @@ class PredictionBacktest(BaseBacktest):
         This approach allows for a more realistic simulation of a betting strategy's performance
         over time, as it would be applied in a real-world scenario.
         """
-        all_results = _ResultColumns()
-        bookie_results = _ResultColumns()
-        current_bankroll = self.initial_bankroll
-        bookie_bankroll = self.initial_bankroll
-        # Fresh ledger per run, so repeated runs (stress_test) never share state
-        history = BetHistory(self.initial_bankroll)
-
         # Convert every needed column to Python values once; the loop then only indexes lists
         self._dates = self.data[self.date_column].tolist()
         predictions = self.data[self.prediction_column].tolist()
         outcomes = self.data[self.outcome_column].tolist()
         odds_columns = self._column_values(self.odds_columns)
-        closing_columns = self._column_values(self.closing_odds_columns)
         prob_columns = self._column_values(self.model_prob_columns) if self.model_prob_columns else None
 
-        for i in range(len(self.data)):
-            prediction = predictions[i]
-            actual_outcome = outcomes[i]
-            odds = self._bet_odds(self._row_values(odds_columns, i))
-            closing = self._row_values(closing_columns, i)
-            model_probs = self._row_values(prob_columns, i)
-
-            bet_details = self.strategy.get_bet_details(odds, current_bankroll, model_probs=model_probs, prediction=prediction,
-                                                        history=history, date=self._dates[i])
-            stake, bet_on, additional_info = bet_details
-
-            result = self._simulate_bet(0, i, prediction, bet_on, actual_outcome, odds, current_bankroll, stake, model_probs=model_probs, closing_odds=closing, **additional_info)
-            current_bankroll = result['bt_ending_bankroll']
-            self._record_bet(history, result)
-            all_results.add(result)
-
-            bookie_result = self._simulate_bookie_bet(0, i, odds, actual_outcome, bookie_bankroll, closing_odds=closing)
-            bookie_bankroll = bookie_result['bt_ending_bankroll']
-            bookie_results.add(bookie_result)
-
-        self.detailed_results = all_results.to_frame(self.data)
-        self.bookie_results = bookie_results.to_frame(self.data)
-        self.history = history
+        rows = [
+            _BetRow(0, i, i, predictions[i], self._row_values(prob_columns, i),
+                    self._bet_odds(self._row_values(odds_columns, i)), outcomes[i])
+            for i in range(len(self.data))
+        ]
+        self._simulate(rows)

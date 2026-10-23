@@ -7,7 +7,17 @@ All notable changes to BacktestBuddy. Newest first.
 **New features:**
 - **Explicit stake sizes**: `FixedStake`, `ValueBet`, and `OddsFilter` take `amount=` (currency, values below 1 allowed) or `fraction=` (share of the current bankroll). The single `stake=` argument still works with its old rule (below 1 = fraction) but emits a `DeprecationWarning`, because `0.99` and `1.0` meant very different bets. New `StakeSize` class.
 - **`RiskLimits` wrapper**: `max_stake_fraction`, `max_stake`, `max_daily_fraction`, `min_stake`, `stop_at_drawdown`, `pause_after_losses` around any strategy. The rule that fired is reported in `bt_risk_limit`.
+- **Strategy toolkit**: `Strategy(select=..., size=...)` combines a selector (`ModelPick`, `HighestProbability`, `Prediction`, `Favourite`, `HighestEV`, `HighestKelly`) with a sizer (`StakeSize`, `KellySize`, `SimultaneousKelly`, `UnitPlan`, `EdgeProportional`). Custom blocks are small `Selector`/`Sizer` subclasses. `FixedStake`, `KellyCriterion`, `ValueBet`, and `UnitStake` are now preset combinations with unchanged constructors, attributes (still reassignable), subclass overrides, and results. `BaseStrategy` moved to `backtestbuddy.strategies.base`; the old import path still works.
+- **Edge-proportional sizing**: `EdgeProportionalStake(min_ev, multiplier, max_fraction)` and the `EdgeProportional` sizer stake `min(multiplier × edge, max_fraction)` of the bankroll.
+- **Simultaneous matches**: `settle_simultaneous=True` sizes all bets with the same date from the bankroll at the start of that slot, caps their total at that bankroll, and records them in the history only after the slot. `SimultaneousKelly` scales a slot's Kelly stakes to `max_total`. New results column `bt_sizing_bankroll` in that mode.
+- **Fast evaluation for hyperparameter search**: `backtest.evaluate(metrics, min_bets=None, fallback=nan)` runs the backtest without the bookie benchmark, the original data columns, and unrequested metrics, and returns exactly the values `run()` plus `calculate_all_metrics()` would. On 10,000 matches a trial takes 0.13 s (FixedStake) / 0.25 s (Kelly) instead of 1.2 s. `calculate_metrics(results, keys)` and `METRIC_NAMES` compute selected metrics; `split_by_date()` makes a holdout split. New docs page *Hyperparameter Tuning* with an Optuna recipe (robust objective, holdout check, two-stage model tuning, multi-process studies). `stress_test()` uses `evaluate()` internally and is faster.
 - **`BetHistory` ledger**: every run records settled bets and passes the ledger to the strategy as `history=` with the match `date=`, so strategies can use memory (streaks, drawdown, daily totals) without their own state. Available after a run as `backtest.history`.
+
+**Performance:**
+- Backtests build their results column-wise instead of from per-row dicts, and both backtest classes share one betting loop: about 2x faster (20,000 matches: FixedStake 1.17 s → 0.60 s, Kelly 1.96 s → 0.98 s). Results are identical.
+
+**Fixes:**
+- A strategy that picks no outcome (`-1`) now always reports stake 0. Before, `FixedStake` with a `-1` prediction kept a non-zero `bt_stake` on a row with no bet, which leaked into `Average Stake`.
 
 **Docs:**
 - `BACKLOG.md` describes planned work, starting with the selector/sizer strategy toolkit (fully backward compatible).

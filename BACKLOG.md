@@ -6,63 +6,15 @@ Status: 🟢 ready to build · 🟡 needs a design decision · ⚪ idea
 
 ---
 
-## 🟢 Strategy toolkit: separate selection from sizing
+## ⚪ Optional compiled kernel (numba, Rust only if needed)
 
-**Why.** Each strategy decides both *which outcome* to bet on and *how much*. Combinations need a new class each time: "value bets only, but sized with Kelly" is impossible today without writing one. `get_bet_details` is near-identical boilerplate in every class, and `select_bet` runs twice per match (inside `calculate_stake` and again in `get_bet_details`).
+**Why.** Only relevant if `evaluate()` (0.13–0.25 s per trial on 10,000 matches) is still too slow for very large searches or Monte Carlo runs. A lean loop without per-match Python objects measured about 0.07 s with Kelly.
 
-**Design.** Two small building blocks plus one class that combines them:
+**Design.** Step 1: numba kernels for the preset strategies behind an optional extra (`pip install backtestbuddy[fast]`). Step 2, only if numba is not enough: a Rust core via PyO3/maturin, same API. Custom Python strategies always keep the Python path, since a per-bet call from Rust back into Python would cancel most of the gain.
 
-```python
-class Selector(ABC):           # which outcome, or -1 to skip
-    def select(self, ctx: BetContext) -> int: ...
+**Cost to weigh.** Platform wheels for Windows, macOS, Linux (incl. ARM) × Python 3.9-3.13, a heavier CI, and two languages to maintain.
 
-class Sizer(ABC):              # how much on that outcome
-    def size(self, ctx: BetContext, outcome: int) -> float: ...
-
-class Strategy(BaseStrategy):  # implements calculate_stake / select_bet / get_bet_details once
-    def __init__(self, select: Selector, size: Sizer): ...
-```
-
-- `BetContext` bundles what a decision can use: `odds`, `bankroll`, `model_probs`, `prediction`, `date`, `history` (the `BetHistory` ledger).
-- Selectors: `HighestProbability`, `Prediction`, `Favourite`, `HighestEV(min_ev)`, `HighestKelly(min_kelly, min_prob)`.
-- Sizers: `Amount(x)`, `Fraction(f)`, `Kelly(fraction, max_bet)`, `UnitPlan(unit, plan)`, `EdgeProportional(...)`.
-- Each sizer and selector reports its own extra info (`kelly_fraction_i`, `ev_i`, …) so results keep their columns.
-
-```python
-strategy = btb.Strategy(select=btb.HighestEV(min_ev=0.03), size=btb.Kelly(fraction=0.5, max_bet=0.05))
-```
-
-**Hard requirement: backward compatibility.**
-
-- Every existing class stays a class with the same constructor and the same results: `FixedStake`, `KellyCriterion`, `ValueBet`, `UnitStake`, `OddsFilter`, `RiskLimits`. Internally they become preset combinations, e.g. `ValueBet(min_ev, amount=10)` = `Strategy(HighestEV(min_ev), Amount(10))`.
-- A user can still write a strategy as **one class** by subclassing `BaseStrategy` and implementing the three methods, exactly as documented today. The toolkit is an additional, simpler path, not a replacement.
-- Wrappers (`OddsFilter`, `RiskLimits`) keep working around both old-style and toolkit strategies.
-- Acceptance: the full current test suite passes unchanged, and `tests/integration/test_metrics_reference.py` produces identical results for all preset classes.
-
-**Effort.** Medium. Mostly moving existing logic into selectors and sizers.
-
----
-
-## 🟢 Kelly for simultaneous events
-
-**Why.** Matches on the same date are settled one after another, so the stake of a later match already uses the result of an earlier one, which is look-ahead. Independent single-bet Kelly on many simultaneous matches also over-bets in total.
-
-**Design.**
-
-- Engine: optional `settle_simultaneous=True` on backtests. All bets of one date (or time slot) are sized from the bankroll at the start of the slot and settled together.
-- Sizer: `SimultaneousKelly(fraction, max_total)` scales the individual Kelly stakes so their sum stays under `max_total` of the bankroll. An exact multi-bet Kelly optimization is a possible later refinement.
-
-**Effort.** Medium; the engine change needs care around `bt_starting_bankroll` per row.
-
----
-
-## 🟢 Edge-proportional sizing
-
-**Why.** A simple alternative to Kelly: stake grows with the edge `p * odds - 1`, with less variance than full Kelly.
-
-**Design.** Sizer `EdgeProportional(base_fraction, max_fraction)`: stake = `bankroll * min(base_fraction * edge, max_fraction)`. Fits the toolkit directly; until then it is a small standalone class.
-
-**Effort.** Small.
+**Effort.** Medium (numba) to large (Rust).
 
 ---
 

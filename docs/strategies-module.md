@@ -40,10 +40,82 @@ This method combines `calculate_stake` and `select_bet` to provide complete bet 
 | `KellyCriterion` | **Yes** | Highest Kelly fraction | Scaled Kelly fraction of current bankroll |
 | `ValueBet` | **Yes** | Highest expected value above `min_ev` | Fixed amount or % of current bankroll |
 | `UnitStake` | No | Same as `FixedStake` | Unit-loss, unit-win, or unit-impact plan |
+| `EdgeProportionalStake` | **Yes** | Highest expected value above `min_ev` | Proportional to the edge, capped |
 | `OddsFilter` | Only if the inner strategy does | Inner strategy, among outcomes in the odds band | Inner strategy |
 | `RiskLimits` | Only if the inner strategy does | Inner strategy | Inner strategy, capped or paused by the limits |
+| `Strategy(select=…, size=…)` | If a part does | Any selector | Any sizer (see [Strategy toolkit](#strategy-toolkit)) |
 
 `PredictionBacktest` raises a `ValueError` if a strategy that needs probabilities gets no `model_prob_columns`.
+
+## Strategy toolkit
+
+A betting decision has two independent parts: **which** outcome to back and **how much** to stake. The toolkit gives you each part as a small building block and lets you combine any selector with any sizer:
+
+```python
+import backtestbuddy as btb
+
+# Value bets only, but sized with half Kelly and at most 5% per bet
+strategy = btb.Strategy(select=btb.HighestEV(min_ev=0.03), size=btb.KellySize(fraction=0.5, max_bet=0.05))
+```
+
+The ready-made classes are preset combinations of the same blocks, with unchanged constructors and results:
+
+| Class | = selector | + sizer |
+|---|---|---|
+| `FixedStake(amount=10)` | `ModelPick()` | `StakeSize(amount=10)` |
+| `KellyCriterion(0.5, 0.1, min_kelly, min_prob)` | `HighestKelly(min_kelly, min_prob)` | `KellySize(0.5, 0.1, min_kelly, min_prob)` |
+| `ValueBet(min_ev, amount=10)` | `HighestEV(min_ev)` | `StakeSize(amount=10)` |
+| `UnitStake(unit, plan)` | `ModelPick()` | `UnitPlan(unit, plan)` |
+| `EdgeProportionalStake(min_ev, multiplier, max_fraction)` | `HighestEV(min_ev)` | `EdgeProportional(multiplier, max_fraction)` |
+
+### Selectors: which outcome
+
+| Selector | Picks | Needs probabilities |
+|---|---|---|
+| `ModelPick()` | Highest probability, else the prediction, else the favourite | No |
+| `HighestProbability()` | Highest model probability | Yes |
+| `Prediction()` | The prediction column; skips rows without one | No |
+| `Favourite()` | Lowest odds | No |
+| `HighestEV(min_ev=0.0)` | Highest `p * odds - 1`, only above `min_ev`; adds `ev_{i}` columns | Yes |
+| `HighestKelly(min_kelly=0.0, min_prob=0.0)` | Highest Kelly fraction above `min_kelly`; adds `kelly_fraction_{i}` | Yes |
+
+### Sizers: how much
+
+| Sizer | Stake | Needs probabilities |
+|---|---|---|
+| `StakeSize(amount=…)` / `StakeSize(fraction=…)` | Fixed amount, or a share of the current bankroll | No |
+| `KellySize(fraction=0.5, max_bet=0.1)` | `min(f* × fraction, max_bet) × bankroll` | Yes |
+| `SimultaneousKelly(fraction, max_bet, max_total=0.3)` | Like `KellySize`; with `settle_simultaneous=True` the stakes of one slot are scaled down together so their sum stays under `max_total` of the bankroll | Yes |
+| `EdgeProportional(multiplier=0.5, max_fraction=0.05)` | `min(multiplier × edge, max_fraction) × bankroll`, edge = `p * odds - 1`; adds an `edge` column | Yes |
+| `UnitPlan(unit, plan)` | Unit-loss, unit-win, or unit-impact | No |
+
+### Writing your own block
+
+A selector implements `select(ctx) -> int` (return `-1` to skip); a sizer implements `size(ctx, outcome) -> float`. Both receive a `BetContext` with `odds`, `bankroll`, `model_probs`, `prediction`, `history` (the run's `BetHistory`), and `date`. Optional `info(...)` methods return extra values that become `bt_{key}` result columns.
+
+```python
+import backtestbuddy as btb
+
+
+class Underdog(btb.Selector):
+    """Back the outcome with the highest odds."""
+
+    def select(self, ctx):
+        return ctx.odds.index(max(ctx.odds))
+
+
+class SmallerAfterLosses(btb.Sizer):
+    """2% of the bankroll, 1% while the last bet lost."""
+
+    def size(self, ctx, outcome):
+        losing = ctx.history is not None and ctx.history.losing_streak > 0
+        return ctx.bankroll * (0.01 if losing else 0.02)
+
+
+strategy = btb.Strategy(select=Underdog(), size=SmallerAfterLosses())
+```
+
+Toolkit strategies work everywhere the classic ones do: in `OddsFilter`, `RiskLimits`, `stress_test()`, and with `settle_simultaneous=True`. Writing a strategy as one `BaseStrategy` subclass (see [Adding New Strategies](#adding-new-strategies)) remains fully supported.
 
 ### Implemented Strategies
 
@@ -136,6 +208,27 @@ All three plans cap the stake at the current bankroll. Bookie path works (favori
 
 - `unit` (float): Staking constant in currency units (must be positive).
 - `plan` (str): `loss`, `win`, or `impact`.
+
+#### EdgeProportionalStake
+
+Bets the highest-EV outcome, like `ValueBet`, but the stake grows with the edge: `min(multiplier × edge, max_fraction) × bankroll`, where edge = `p * odds - 1`.
+
+```python
+import backtestbuddy as btb
+
+strategy = btb.EdgeProportionalStake(min_ev=0.02, multiplier=0.5, max_fraction=0.05)
+# edge 6%  -> 3% of the bankroll
+# edge 20% -> capped at 5%
+```
+
+Compared with Kelly, the stake does not shrink for long odds (Kelly divides by `odds - 1`), and the cap keeps the variance low. Results include an `edge` column next to `ev_{i}`.
+
+##### Attributes (EdgeProportionalStake)
+
+- `min_ev` (float): Minimum expected value to bet (default 0).
+- `multiplier` (float): Bankroll share per unit of edge (default 0.5).
+- `max_fraction` (float): Cap as a bankroll share (default 0.05).
+- `requires_probabilities` (bool): Always `True`.
 
 #### OddsFilter
 
@@ -248,7 +341,7 @@ Returns the default betting strategy.
 
 ## Adding New Strategies
 
-To add a new strategy:
+The shortest way is usually the [Strategy toolkit](#strategy-toolkit): write a selector or a sizer and combine it. To write a complete strategy as one class instead:
 
 1. Create a new class that inherits from `BaseStrategy`.
 2. Implement the `calculate_stake`, `select_bet`, and `get_bet_details` methods.

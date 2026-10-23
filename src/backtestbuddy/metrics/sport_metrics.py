@@ -25,7 +25,7 @@ Closing line value (CLV) compares the odds taken with reference odds in
 ``bt_closing_odd_*``; those columns are optional.
 """
 
-from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -1364,6 +1364,149 @@ def calculate_beat_closing_line(detailed_results: pd.DataFrame) -> float:
     return float((frame["odds"] > frame["close"]).mean() * 100)
 
 
+class _MetricInputs:
+    """Results plus intermediates that several metrics share, computed once on demand."""
+
+    def __init__(self, detailed_results: pd.DataFrame, margin_method: MarginMethod):
+        self.df = detailed_results
+        self.margin_method = margin_method
+        self._cache: Dict[str, Any] = {}
+
+    def _get(self, name: str, compute: Callable[[], Any]) -> Any:
+        if name not in self._cache:
+            self._cache[name] = compute()
+        return self._cache[name]
+
+    @property
+    def bet_placed(self) -> pd.DataFrame:
+        return self._get("bet_placed", lambda: _filter_placed_bets(self.df))
+
+    @property
+    def start_date(self) -> Any:
+        return self._get("start_date", lambda: self.df["bt_date_column"].min())
+
+    @property
+    def end_date(self) -> Any:
+        return self._get("end_date", lambda: self.df["bt_date_column"].max())
+
+    @property
+    def drawdowns(self) -> Tuple[float, int]:
+        return self._get("drawdowns", lambda: calculate_drawdowns(self.bet_placed))
+
+    @property
+    def best_worst(self) -> Tuple[float, float]:
+        return self._get("best_worst", lambda: calculate_best_worst_bets(self.bet_placed))
+
+    @property
+    def highest_odds(self) -> Tuple[float, float]:
+        return self._get("highest_odds", lambda: calculate_highest_odds(self.bet_placed))
+
+    @property
+    def obs_periods_per_year(self) -> float:
+        return self._get("obs", lambda: _observed_periods_per_year(self.df))
+
+
+def _bet_frequency(m: _MetricInputs) -> float:
+    n_opportunities = len(m.df)
+    return (len(m.bet_placed) / n_opportunities) * 100 if n_opportunities else 0.0
+
+
+# One entry per key of calculate_all_metrics, in its order. Each function
+# reads the results through _MetricInputs, so shared work happens once.
+_METRICS: Dict[str, Callable[[_MetricInputs], Any]] = {
+    "Backtest Start Date": lambda m: m.start_date,
+    "Backtest End Date": lambda m: m.end_date,
+    "Backtest Duration": lambda m: m.end_date - m.start_date,
+    "ROI [%]": lambda m: calculate_roi(m.df) * 100,
+    "Yield [%]": lambda m: calculate_yield(m.df),
+    "Expected Yield [%]": lambda m: calculate_expected_yield(m.df),
+    "Avg. ROI per Bet [%] (micro)": lambda m: calculate_avg_roi_per_bet_micro(m.df),
+    "Avg. ROI per Year [%] (micro)": lambda m: calculate_avg_roi_per_year_micro(m.df),
+    "Avg. ROI per Year [%] (macro)": lambda m: calculate_avg_roi_per_year_macro(m.df),
+    "CAGR [%]": lambda m: calculate_cagr(m.df),
+    "Risk-Adjusted Annual ROI [-]": lambda m: calculate_risk_adjusted_annual_roi(m.df),
+    "Total Profit [$]": lambda m: calculate_total_profit(m.df),
+    "Expected Profit [$]": lambda m: calculate_expected_profit(m.df),
+    "Realized vs Expected Profit [$]": lambda m: calculate_realized_vs_expected_profit(m.df),
+    "Bankroll Final [$]": lambda m: m.df["bt_ending_bankroll"].iloc[-1],
+    "Bankroll Peak [$]": lambda m: m.df["bt_ending_bankroll"].max(),
+    "Bankroll Valley [$]": lambda m: m.df["bt_ending_bankroll"].min(),
+    "Sharpe Ratio (365.25) [-]": lambda m: calculate_sharpe_ratio(m.df),
+    "Sharpe Ratio (252) [-]": lambda m: calculate_sharpe_ratio(m.df, output_period=TRADING_DAYS_PER_YEAR),
+    "Sharpe Ratio (obs/year) [-]": lambda m: calculate_sharpe_ratio(m.df, output_period=m.obs_periods_per_year),
+    "Sortino Ratio (365.25) [-]": lambda m: calculate_sortino_ratio(m.df),
+    "Sortino Ratio (252) [-]": lambda m: calculate_sortino_ratio(m.df, output_period=TRADING_DAYS_PER_YEAR),
+    "Sortino Ratio (obs/year) [-]": lambda m: calculate_sortino_ratio(m.df, output_period=m.obs_periods_per_year),
+    "Calmar Ratio [-]": lambda m: calculate_calmar_ratio(m.df),
+    "Max Drawdown [%]": lambda m: m.drawdowns[0] * 100,
+    "Max. Drawdown Duration [bets]": lambda m: m.drawdowns[1],
+    "Win Rate [%]": lambda m: calculate_win_rate(m.bet_placed) * 100,
+    "Average Odds [-]": lambda m: calculate_average_odds(m.bet_placed),
+    "Average Implied Prob [-]": lambda m: calculate_average_implied_prob(m.df),
+    "Average Overround [%]": lambda m: calculate_average_overround(m.df),
+    "Brier Score (placed) [-]": lambda m: calculate_brier_score(m.df),
+    "Brier Score (all games) [-]": lambda m: calculate_brier_score(m.df, scope="all"),
+    "Log Loss (placed) [-]": lambda m: calculate_log_loss(m.df),
+    "Log Loss (all games) [-]": lambda m: calculate_log_loss(m.df, scope="all"),
+    "ECE (placed) [-]": lambda m: calculate_ece(m.df),
+    "ECE (all games) [-]": lambda m: calculate_ece(m.df, scope="all"),
+    "Brier Score (market, all games) [-]": lambda m: calculate_market_brier_score(m.df, method=m.margin_method),
+    "Log Loss (market, all games) [-]": lambda m: calculate_market_log_loss(m.df, method=m.margin_method),
+    "CLV [%]": lambda m: calculate_clv(m.df),
+    "CLV (no-vig) [%]": lambda m: calculate_clv(m.df, no_vig=True, method=m.margin_method),
+    "Beat Closing Line [%]": lambda m: calculate_beat_closing_line(m.df),
+    "Highest Winning Odds [-]": lambda m: m.highest_odds[0],
+    "Highest Losing Odds [-]": lambda m: m.highest_odds[1],
+    "Average Stake [$]": lambda m: calculate_average_stake(m.bet_placed),
+    "Best Bet [$]": lambda m: m.best_worst[0],
+    "Worst Bet [$]": lambda m: m.best_worst[1],
+    "Total Bets": lambda m: len(m.bet_placed),
+    "Total Opportunities": lambda m: len(m.df),
+    "Bet Frequency [%]": _bet_frequency,
+}
+
+METRIC_NAMES: Tuple[str, ...] = tuple(_METRICS)
+
+
+def calculate_metrics(
+    detailed_results: pd.DataFrame,
+    metrics: Union[str, Sequence[str], None] = None,
+    margin_method: MarginMethod = "multiplicative",
+) -> Dict[str, Any]:
+    """Calculate selected metrics by their ``calculate_all_metrics`` keys.
+
+    Only the requested metrics (and what they depend on) are computed, so
+    asking for one metric is far cheaper than the full dictionary. Values
+    are identical to the same keys of ``calculate_all_metrics``.
+
+    Args:
+        detailed_results: Backtest result rows.
+        metrics: One key, a list of keys, or None for all (see
+            ``METRIC_NAMES``).
+        margin_method: Margin removal for no-vig CLV and the market scores.
+
+    Returns:
+        Mapping of the requested keys to values, in the requested order.
+
+    Raises:
+        ValueError: If a key is unknown.
+
+    Example:
+        >>> calculate_metrics(results, ["Yield [%]", "Max Drawdown [%]"])
+    """
+    if metrics is None:
+        names: List[str] = list(_METRICS)
+    elif isinstance(metrics, str):
+        names = [metrics]
+    else:
+        names = list(metrics)
+    unknown = [name for name in names if name not in _METRICS]
+    if unknown:
+        raise ValueError(f"Unknown metric(s) {unknown}. Valid keys: {list(_METRICS)}")
+    inputs = _MetricInputs(detailed_results, margin_method)
+    return {name: _METRICS[name](inputs) for name in names}
+
+
 def calculate_all_metrics(
     detailed_results: pd.DataFrame,
     margin_method: MarginMethod = "multiplicative",
@@ -1397,111 +1540,4 @@ def calculate_all_metrics(
     Returns:
         Mapping of metric names to values.
     """
-    bet_placed = _filter_placed_bets(detailed_results)
-
-    start_date = detailed_results["bt_date_column"].min()
-    end_date = detailed_results["bt_date_column"].max()
-    duration = end_date - start_date
-
-    bankroll_final = detailed_results["bt_ending_bankroll"].iloc[-1]
-    bankroll_peak = detailed_results["bt_ending_bankroll"].max()
-    bankroll_valley = detailed_results["bt_ending_bankroll"].min()
-
-    max_drawdown, max_drawdown_duration = calculate_drawdowns(bet_placed)
-    best_bet, worst_bet = calculate_best_worst_bets(bet_placed)
-    highest_winning_odds, highest_losing_odds = calculate_highest_odds(
-        bet_placed
-    )
-
-    n_opportunities = len(detailed_results)
-    n_bets = len(bet_placed)
-    bet_frequency = (
-        (n_bets / n_opportunities) * 100 if n_opportunities else 0.0
-    )
-    obs_periods_per_year = _observed_periods_per_year(detailed_results)
-
-    return {
-        "Backtest Start Date": start_date,
-        "Backtest End Date": end_date,
-        "Backtest Duration": duration,
-        "ROI [%]": calculate_roi(detailed_results) * 100,
-        "Yield [%]": calculate_yield(detailed_results),
-        "Expected Yield [%]": calculate_expected_yield(detailed_results),
-        "Avg. ROI per Bet [%] (micro)": calculate_avg_roi_per_bet_micro(
-            detailed_results
-        ),
-        "Avg. ROI per Year [%] (micro)": calculate_avg_roi_per_year_micro(
-            detailed_results
-        ),
-        "Avg. ROI per Year [%] (macro)": calculate_avg_roi_per_year_macro(
-            detailed_results
-        ),
-        "CAGR [%]": calculate_cagr(detailed_results),
-        "Risk-Adjusted Annual ROI [-]": calculate_risk_adjusted_annual_roi(
-            detailed_results
-        ),
-        "Total Profit [$]": calculate_total_profit(detailed_results),
-        "Expected Profit [$]": calculate_expected_profit(detailed_results),
-        "Realized vs Expected Profit [$]": (
-            calculate_realized_vs_expected_profit(detailed_results)
-        ),
-        "Bankroll Final [$]": bankroll_final,
-        "Bankroll Peak [$]": bankroll_peak,
-        "Bankroll Valley [$]": bankroll_valley,
-        "Sharpe Ratio (365.25) [-]": calculate_sharpe_ratio(detailed_results),
-        "Sharpe Ratio (252) [-]": calculate_sharpe_ratio(
-            detailed_results, output_period=TRADING_DAYS_PER_YEAR
-        ),
-        "Sharpe Ratio (obs/year) [-]": calculate_sharpe_ratio(
-            detailed_results,
-            output_period=obs_periods_per_year,
-        ),
-        "Sortino Ratio (365.25) [-]": calculate_sortino_ratio(detailed_results),
-        "Sortino Ratio (252) [-]": calculate_sortino_ratio(
-            detailed_results, output_period=TRADING_DAYS_PER_YEAR
-        ),
-        "Sortino Ratio (obs/year) [-]": calculate_sortino_ratio(
-            detailed_results,
-            output_period=obs_periods_per_year,
-        ),
-        "Calmar Ratio [-]": calculate_calmar_ratio(detailed_results),
-        "Max Drawdown [%]": max_drawdown * 100,
-        "Max. Drawdown Duration [bets]": max_drawdown_duration,
-        "Win Rate [%]": calculate_win_rate(bet_placed) * 100,
-        "Average Odds [-]": calculate_average_odds(bet_placed),
-        "Average Implied Prob [-]": calculate_average_implied_prob(
-            detailed_results
-        ),
-        "Average Overround [%]": calculate_average_overround(
-            detailed_results
-        ),
-        "Brier Score (placed) [-]": calculate_brier_score(detailed_results),
-        "Brier Score (all games) [-]": calculate_brier_score(
-            detailed_results, scope="all"
-        ),
-        "Log Loss (placed) [-]": calculate_log_loss(detailed_results),
-        "Log Loss (all games) [-]": calculate_log_loss(
-            detailed_results, scope="all"
-        ),
-        "ECE (placed) [-]": calculate_ece(detailed_results),
-        "ECE (all games) [-]": calculate_ece(detailed_results, scope="all"),
-        "Brier Score (market, all games) [-]": calculate_market_brier_score(
-            detailed_results, method=margin_method
-        ),
-        "Log Loss (market, all games) [-]": calculate_market_log_loss(
-            detailed_results, method=margin_method
-        ),
-        "CLV [%]": calculate_clv(detailed_results),
-        "CLV (no-vig) [%]": calculate_clv(
-            detailed_results, no_vig=True, method=margin_method
-        ),
-        "Beat Closing Line [%]": calculate_beat_closing_line(detailed_results),
-        "Highest Winning Odds [-]": highest_winning_odds,
-        "Highest Losing Odds [-]": highest_losing_odds,
-        "Average Stake [$]": calculate_average_stake(bet_placed),
-        "Best Bet [$]": best_bet,
-        "Worst Bet [$]": worst_bet,
-        "Total Bets": n_bets,
-        "Total Opportunities": n_opportunities,
-        "Bet Frequency [%]": bet_frequency,
-    }
+    return calculate_metrics(detailed_results, None, margin_method)

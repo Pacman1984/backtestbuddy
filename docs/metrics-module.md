@@ -2,6 +2,8 @@
 
 `backtest.calculate_metrics()` (or `calculate_all_metrics(detailed_results, margin_method="multiplicative")` from `backtestbuddy.metrics.sport_metrics`) returns one dictionary with every metric below. This page lists them first in a quick reference, then explains each one with its formula and the results columns it reads.
 
+To compute only some metrics, pass their keys: `calculate_metrics(detailed_results, ["Yield [%]", "Max Drawdown [%]"])` returns the same values as the matching keys of `calculate_all_metrics`, without computing the rest. `METRIC_NAMES` lists every key.
+
 A **placed bet** is a row with `bt_stake > 0` and `bt_bet_on != -1`. Values that cannot be computed, e.g. CLV without closing odds, are `nan` and appear as "—" in the plot table.
 
 ## Quick reference

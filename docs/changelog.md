@@ -2,7 +2,9 @@
 
 All notable changes to BacktestBuddy. Newest first.
 
-## Unreleased
+## Version 0.3.0 (2026-10-24)
+
+Upgrade notes: fully backward compatible with 0.2.0. Existing strategies, constructors, attributes, and results are unchanged. Passing a single `stake=` (or a positional number) to `FixedStake`, `ValueBet`, or `OddsFilter` now emits a `DeprecationWarning`; use `amount=` for currency or `fraction=` for a share of the bankroll instead.
 
 **New features:**
 - **Explicit stake sizes**: `FixedStake`, `ValueBet`, and `OddsFilter` take `amount=` (currency, values below 1 allowed) or `fraction=` (share of the current bankroll). The single `stake=` argument still works with its old rule (below 1 = fraction) but emits a `DeprecationWarning`, because `0.99` and `1.0` meant very different bets. New `StakeSize` class.

@@ -2,7 +2,9 @@
 
 All notable changes to BacktestBuddy. Newest first.
 
-## Unreleased
+## Version 0.3.1 (2026-10-28)
+
+Bug-fix release. Upgrade notes: no API changes; if you replicate the simultaneous slot flow outside a backtest, add the two `BetHistory` calls described below.
 
 **Fixes:**
 - **`RiskLimits(max_daily_fraction)` with `settle_simultaneous=True`** now caps the day's total stake. Before, the bets of a slot were decided before any of them settled, `history.staked_on(date)` returned 0 for every bet of the slot, and the daily limit only acted per bet (e.g. 10 bets and 5x the limit instead of 2 bets). Reported from the tennis repository.

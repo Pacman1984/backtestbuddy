@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "backtestbuddy"
-version = "0.3.0"
+version = "0.3.1"
 description = "Sports-betting backtesting with bankroll simulation and risk metrics"
 readme = "README.md"
 requires-python = ">=3.9"

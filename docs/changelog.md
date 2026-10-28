@@ -2,6 +2,20 @@
 
 All notable changes to BacktestBuddy. Newest first.
 
+## Version 0.3.1 (2026-10-28)
+
+Bug-fix release. Upgrade notes: no API changes; if you replicate the simultaneous slot flow outside a backtest, add the two `BetHistory` calls described below.
+
+**Fixes:**
+- **`RiskLimits(max_daily_fraction)` with `settle_simultaneous=True`** now caps the day's total stake. Before, the bets of a slot were decided before any of them settled, `history.staked_on(date)` returned 0 for every bet of the slot, and the daily limit only acted per bet (e.g. 10 bets and 5x the limit instead of 2 bets). Reported from the tennis repository.
+
+**Changed slot flow (relevant if you replicate it outside a backtest, e.g. for live betting):**
+- Inside a simultaneous slot, the backtest now calls `history.add_open_stake(date, stake)` right after each `get_bet_details` that places a bet, then `adjust_simultaneous(stakes, bankroll)` and the bankroll cap as before, and `history.clear_open_stakes()` before recording the settled bets. `adjust_simultaneous` keeps its signature. A live implementation that mirrors the 0.3.0 flow must add these two calls to match backtest results.
+- New `BetHistory` methods: `add_open_stake`, `clear_open_stakes`, and the `open_stake` property. `staked_on(date)` counts settled plus open stakes; results, streaks, and drawdown still update only when a bet settles.
+
+**Docs:**
+- Simultaneous slots: `pause_after_losses` and `stop_at_drawdown` deliberately see only earlier slots, because a slot's matches have not finished when its bets are placed.
+
 ## Version 0.3.0 (2026-10-24)
 
 Upgrade notes: fully backward compatible with 0.2.0. Existing strategies, constructors, attributes, and results are unchanged. Passing a single `stake=` (or a positional number) to `FixedStake`, `ValueBet`, or `OddsFilter` now emits a `DeprecationWarning`; use `amount=` for currency or `fraction=` for a share of the bankroll instead.

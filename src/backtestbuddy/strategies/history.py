@@ -11,6 +11,13 @@ leak state into each other.
 Queries read running totals that ``record`` keeps up to date, so they do
 not slow down as the history grows (``losing_streak_on`` walks back only
 over the current streak).
+
+With ``settle_simultaneous=True`` the bets of one slot are all placed
+before any of them settles. The backtest registers each placed stake with
+``add_open_stake`` right after the decision, so ``staked_on`` already
+counts the day's open exposure (as a live bettor would), and clears the
+open stakes once the slot settles and its bets are recorded. Results
+(profit, streaks, drawdown) stay unknown until then.
 """
 
 from dataclasses import dataclass
@@ -65,6 +72,7 @@ class BetHistory:
         self._staked_by_day: Dict[pd.Timestamp, float] = {}
         self._profit_by_day: Dict[pd.Timestamp, float] = {}
         self._day_start_bankroll: Dict[pd.Timestamp, float] = {}
+        self._open_by_day: Dict[pd.Timestamp, float] = {}
         self._last_date: Any = None
         self._last_day: Optional[pd.Timestamp] = None
 
@@ -146,9 +154,34 @@ class BetHistory:
         """Consecutive losses at the end of the history."""
         return self._losing_streak
 
+    def add_open_stake(self, date: Any, stake: float) -> None:
+        """Register a placed stake whose match has not settled yet.
+
+        Used for simultaneous slots: the stake counts in ``staked_on`` until
+        ``clear_open_stakes`` is called, so daily limits see the exposure of
+        bets placed earlier in the same slot.
+
+        Args:
+            date: Match date.
+            stake: Amount staked; non-positive stakes are ignored.
+        """
+        if stake > 0:
+            day = self._day(date)
+            self._open_by_day[day] = self._open_by_day.get(day, 0.0) + float(stake)
+
+    def clear_open_stakes(self) -> None:
+        """Forget open stakes, e.g. after their slot settled and was recorded."""
+        self._open_by_day.clear()
+
+    @property
+    def open_stake(self) -> float:
+        """Total of registered stakes that have not settled yet."""
+        return sum(self._open_by_day.values())
+
     def staked_on(self, date: Any) -> float:
-        """Total stake of bets settled on the calendar day of ``date``."""
-        return self._staked_by_day.get(self._day(date), 0.0)
+        """Total stake on the calendar day of ``date``: settled plus still open."""
+        day = self._day(date)
+        return self._staked_by_day.get(day, 0.0) + self._open_by_day.get(day, 0.0)
 
     def profit_on(self, date: Any) -> float:
         """Net profit of bets settled on the calendar day of ``date``."""

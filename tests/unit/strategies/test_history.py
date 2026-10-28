@@ -69,3 +69,25 @@ class TestPerDay:
     def test_bets_is_a_copy(self, history):
         history.bets.clear()
         assert history.n_bets == 4
+
+
+class TestOpenStakes:
+    """Stakes placed in a simultaneous slot count before they settle."""
+
+    def test_open_stake_counts_in_staked_on(self, history):
+        history.add_open_stake("2023-01-02 18:00", 30)
+        assert history.open_stake == 30
+        assert history.staked_on("2023-01-02") == 80  # 50 settled + 30 open
+        assert history.staked_on("2023-01-01") == 250  # other days unaffected
+
+    def test_non_positive_ignored_and_clear(self, history):
+        history.add_open_stake("2023-01-02", 0)
+        history.add_open_stake("2023-01-02", -5)
+        assert history.open_stake == 0
+        history.add_open_stake("2023-01-02", 10)
+        history.clear_open_stakes()
+        assert history.open_stake == 0 and history.staked_on("2023-01-02") == 50
+
+    def test_open_stakes_do_not_change_results(self, history):
+        history.add_open_stake("2023-01-02", 100)
+        assert (history.bankroll, history.drawdown, history.losing_streak) == (900, pytest.approx(1 - 900 / 1100), 3)

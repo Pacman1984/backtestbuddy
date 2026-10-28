@@ -273,6 +273,8 @@ strategy = btb.RiskLimits(
 
 The rules are applied in this order. The rule that changed or blocked a bet is written to the results column `bt_risk_limit`, so `backtest.detailed_results["bt_risk_limit"].value_counts()` shows how often each limit fired.
 
+With `settle_simultaneous=True`, `max_daily_fraction` also caps the total of one slot, because stakes count as open in the history as soon as they are placed. `pause_after_losses` and `stop_at_drawdown` only see results of earlier slots, since the slot's matches have not finished when its bets are placed.
+
 Rules that need the history only work inside a backtest. The bookie benchmark calls the strategy without a history, so only the stateless caps apply there. Wrappers can be nested, e.g. `OddsFilter(min_odds=1.5, inner=RiskLimits(...))`.
 
 ## Strategies with memory: `BetHistory`
@@ -290,7 +292,8 @@ A strategy that needs to remember anything reads the ledger instead of keeping i
 | `bankroll`, `peak_bankroll`, `drawdown` | Current bankroll, highest so far (including the start), fall below the peak as a fraction |
 | `n_bets`, `bets`, `last_bet` | Count, all settled bets, the most recent one (`SettledBet` with `date`, `stake`, `profit`, `bankroll_before`, `bankroll_after`, `won`) |
 | `losing_streak`, `losing_streak_on(date)` | Consecutive losses at the end, overall or within one day |
-| `staked_on(date)`, `profit_on(date)`, `bankroll_at_start_of(date)` | Per-calendar-day totals |
+| `staked_on(date)`, `profit_on(date)`, `bankroll_at_start_of(date)` | Per-calendar-day totals; `staked_on` includes stakes that are placed but not settled yet |
+| `add_open_stake(date, stake)`, `clear_open_stakes()`, `open_stake` | Register, clear, and sum placed-but-unsettled stakes (used for simultaneous slots; call them yourself if you replicate the slot flow outside a backtest) |
 
 Example: a flat stake that halves after two losses in a row.
 

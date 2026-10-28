@@ -115,10 +115,12 @@ The table is indexed by `odds_haircut` and shows ROI, Yield, CAGR, Max Drawdown,
 
 By default rows settle one after another: with percentage staking, a later match on the same day is sized from a bankroll that already includes the result of an earlier one, which a real bettor could not know. With `settle_simultaneous=True`, rows that share the same date value form one **slot**:
 
-1. Every bet of the slot is decided from the bankroll at the start of the slot.
+1. Every bet of the slot is decided from the bankroll at the start of the slot. Each placed stake is registered in `BetHistory` as **open** right away, so later bets of the slot see it in `history.staked_on(date)`; daily stake limits therefore cover the whole slot.
 2. The slot's total stake is capped at that bankroll, in row order.
 3. The strategy may rescale the slot's stakes (`SimultaneousKelly` caps their sum at `max_total`).
-4. The bets settle; their results reach `BetHistory` only after the whole slot.
+4. The bets settle; their results (profit, wins, losing streaks, drawdown) reach `BetHistory` only after the whole slot, and the open stakes are replaced by the settled ones.
+
+This mirrors live betting: you know how much you have already staked today, but not yet how those matches end. That is why `RiskLimits(pause_after_losses=...)` cannot react to losses inside the same slot, only to earlier slots.
 
 ```python
 import pandas as pd

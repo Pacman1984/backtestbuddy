@@ -475,6 +475,9 @@ class BaseBacktest(ABC):
                     row.odds, slot_bankroll, model_probs=row.probs, prediction=row.prediction,
                     history=history, date=self._dates[row.position])
                 decisions.append([stake, bet_on, additional_info])
+                if simultaneous and bet_on != -1:
+                    # Placed but unsettled: later bets of the slot see it in history.staked_on()
+                    history.add_open_stake(self._dates[row.position], stake)
             if simultaneous and adjust is not None:
                 adjusted = adjust([d[0] if d[1] != -1 else 0.0 for d in decisions], slot_bankroll)
                 for decision, stake in zip(decisions, adjusted):
@@ -519,7 +522,10 @@ class BaseBacktest(ABC):
                 bookie_bankroll = bookie_result['bt_ending_bankroll']
                 bookie_results.add(bookie_result)
 
-            # Results of a simultaneous slot become visible to strategies only afterwards
+            # Results of a simultaneous slot become visible to strategies only afterwards;
+            # the settled stakes replace the open ones in history.staked_on()
+            if simultaneous:
+                history.clear_open_stakes()
             for result in settled:
                 self._record_bet(history, result)
 

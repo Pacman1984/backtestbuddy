@@ -17,7 +17,9 @@ import pytest
 import backtestbuddy as btb
 from backtestbuddy.strategies.history import BetHistory
 
-REFERENCE_FILE = Path(__file__).parent / "data" / "reference_0_3_1.csv.gz"
+DATA_DIR = Path(__file__).parent / "data"
+REFERENCE_INPUT = DATA_DIR / "reference_input.csv.gz"
+REFERENCE_FILE = DATA_DIR / "reference_0_3_1.csv.gz"
 REFERENCE_COLUMNS = ["bt_stake", "bt_bet_on", "bt_win", "bt_profit", "bt_starting_bankroll",
                      "bt_ending_bankroll", "bt_risk_limit", "bt_sizing_bankroll"]
 
@@ -35,6 +37,15 @@ def _random_data():
         "y": (rng.uniform(size=n) > p).astype(int),
         "pa": p, "pb": 1 - p, "pred": (p < 0.5).astype(int),
     })
+
+
+def reference_input():
+    """The stored output of ``_random_data``.
+
+    NumPy versions may differ in the last bit of generated floats, so the exact
+    comparison with 0.3.1 reads the inputs it was computed from.
+    """
+    return pd.read_csv(REFERENCE_INPUT, parse_dates=["date"])
 
 
 def _kelly():
@@ -79,14 +90,14 @@ def _as_text(series):
 class TestDefaultsUnchanged:
     @pytest.fixture(scope="class")
     def reference(self):
-        # Written by backtestbuddy 0.3.1 (commit 0cb9dd9) with float_format="%.17g", so every
-        # float round-trips exactly
+        # Written by backtestbuddy 0.3.1 (commit 0cb9dd9) from REFERENCE_INPUT with
+        # float_format="%.17g", so every float round-trips exactly
         return pd.read_csv(REFERENCE_FILE, keep_default_na=False, na_values=[""])
 
     @pytest.mark.parametrize("name,settle", SCENARIOS)
     def test_identical_to_031(self, reference, name, settle):
         expected = reference[reference["scenario"] == f"{name}/{settle}"].reset_index(drop=True)
-        actual = reference_frame(_backtest(_random_data(), STRATEGIES[name](), settle), name, settle)
+        actual = reference_frame(_backtest(reference_input(), STRATEGIES[name](), settle), name, settle)
         assert len(actual) == len(expected) == 120
         for column in ["bt_stake", "bt_bet_on", "bt_profit", "bt_starting_bankroll", "bt_ending_bankroll",
                        "bt_sizing_bankroll", "bookie_stake", "bookie_ending_bankroll"]:

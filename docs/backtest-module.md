@@ -170,7 +170,7 @@ print(backtest.detailed_results["bt_stake"].tolist())
 
 Details:
 
-- During the run, a strategy's day queries (`history.staked_on(date)`, `profit_on`, `bankroll_at_start_of`, `losing_streak_on`) use the key of the row being decided together with the calendar day of the `date` they pass, so a query for yesterday returns yesterday of the same copy. Strategies need no changes.
+- During the run, a strategy's day queries (`history.staked_on(date)`, `profit_on`, `bankroll_at_start_of`, `losing_streak_on`) use the key of the row being decided together with the calendar day of the `date` they pass, so a query for yesterday returns yesterday of the same copy. Strategies need no changes. Limit: during a run with `day_column`, a query without `key=` always uses the key of the row being decided, so a strategy cannot ask for the total over all keys of one calendar day.
 - With a key, `losing_streak_on` counts the losses at the end of the bets of that (day, key), even if bets with other keys settled in between. Drawdown, bankroll, and the global `losing_streak` stay global over all rows.
 - A day that starts inside a simultaneous slot starts at the slot's opening bankroll, so `bankroll_at_start_of` (and `max_daily_fraction`) does not depend on the row order inside the slot.
 - After the run, pass the key explicitly: `backtest.history.staked_on("2024-03-01", key=2)`. Without `key=`, queries see only bets booked without a key, i.e. 0 (and the current bankroll for `bankroll_at_start_of`) after a run with `day_column`.

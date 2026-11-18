@@ -7,8 +7,11 @@ All notable changes to BacktestBuddy. Newest first.
 Upgrade notes: fully backward compatible. Without the new arguments results are identical to 0.3.1.
 
 **New features:**
-- **`PredictionBacktest(slot_column=None, day_column=None)`**: separate, optional keys for the settlement slot of `settle_simultaneous` and for the day of every day limit and day total of `BetHistory` (`max_daily_fraction`, `pause_after_losses`, `staked_on`, `profit_on`, `bankroll_at_start_of`, `losing_streak_on`). Defaults keep today's rules (equal date values; calendar day of the date). Dates stay real for every metric. Made for a bootstrap that draws tournament editions with replacement, where copies of one edition fall on the same calendar days but need their own daily limits, with or without settling together. A slot key needs `settle_simultaneous=True` and adjacent rows in date order; missing columns, missing values, and unhashable keys raise a `ValueError`.
-- **`BetHistory.set_day_key(key)`**: use any hashable key instead of the calendar day until the next call; with a key, `losing_streak_on` counts the trailing losses of the bets with that key.
+- **`PredictionBacktest(slot_column=None, day_column=None)`**: separate, optional keys. `slot_column` replaces the date value as the settlement slot of `settle_simultaneous`. `day_column` is combined with the calendar day: every day limit and day total of `BetHistory` (`max_daily_fraction`, `pause_after_losses`, `staked_on`, `profit_on`, `bankroll_at_start_of`, `losing_streak_on`) uses the pair (calendar day, key). Defaults keep today's rules (equal date values; calendar day). Dates stay real for every metric. Made for a bootstrap that draws tournament editions with replacement, where copies of one edition fall on the same calendar days but need their own daily limits, with or without settling together. A slot key needs `settle_simultaneous=True` and adjacent rows in date order; missing columns, missing values, unhashable keys, equal keys of different types, and `day_column == date_column` raise a `ValueError`.
+- **`BetHistory` day keys**: `record(..., key=, day_start_bankroll=)`, `add_open_stake(..., key=)`, and `staked_on`/`profit_on`/`bankroll_at_start_of`/`losing_streak_on(date, key=None)`. Ledgers pickled with 0.3.1 still load.
+
+**Changed behaviour (simultaneous slots only):**
+- A day that starts inside a slot now starts at the slot's opening bankroll for every bet of that day in the slot. Results with default slots are unchanged (all rows of a default slot share one date value); it matters for a `slot_column` slot that spans two calendar days and for day keys that share a slot.
 
 ## Version 0.3.1 (2026-10-28)
 

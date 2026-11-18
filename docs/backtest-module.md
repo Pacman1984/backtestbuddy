@@ -26,7 +26,7 @@
 | `prediction_column` | required | Predicted outcome index. |
 | `model_prob_columns` | `None` | Model probability per outcome, same order as `odds_columns`. Required for `KellyCriterion` and `ValueBet`. When given, `FixedStake` and `UnitStake` bet on the highest probability instead of the prediction. |
 | `slot_column` | `None` | Rows with the same value in this column form one settlement slot, instead of rows with the same date value. Needs `settle_simultaneous=True`; the rows of a slot must be adjacent after the stable sort by date. See [Slot and day keys](#slot-and-day-keys). |
-| `day_column` | `None` | Values of this column replace the calendar day for daily limits (`max_daily_fraction`, `pause_after_losses`) and every other day total of `BetHistory`. See [Slot and day keys](#slot-and-day-keys). |
+| `day_column` | `None` | Key combined with the calendar day: daily limits (`max_daily_fraction`, `pause_after_losses`) and every other day total of `BetHistory` use the pair (calendar day, key). Must differ from `date_column`. See [Slot and day keys](#slot-and-day-keys). |
 
 ### `ModelBacktest` only
 
@@ -40,7 +40,7 @@
 
 - Odds are **decimal**. Convert American or fractional odds first.
 - A bet either wins or loses. Voids and pushes (e.g. tennis retirements at some bookmakers) are not modeled; remove or settle them beforehand.
-- Invalid values raise a `ValueError` at construction: missing columns, a closing-odds list of the wrong length, `odds_haircut` outside `[0, 1)`, an unknown `margin_method`, a probability-based strategy without `model_prob_columns`, or a `slot_column`/`day_column` with missing or unhashable values (and, for slots, without `settle_simultaneous=True` or with non-adjacent rows).
+- Invalid values raise a `ValueError` at construction: missing columns, a closing-odds list of the wrong length, `odds_haircut` outside `[0, 1)`, an unknown `margin_method`, a probability-based strategy without `model_prob_columns`, or a `slot_column`/`day_column` with missing or unhashable values or with keys that compare equal but differ in type (`1`, `1.0`, `True`); for slots also without `settle_simultaneous=True` or with non-adjacent rows, for days also `day_column == date_column`.
 
 ## Methods
 
@@ -148,7 +148,7 @@ Slots are defined by exact equality of the date values. With timestamps, matches
 
 ### Slot and day keys
 
-By default the slot is the date value and the "day" of daily limits is the calendar day of the date. `PredictionBacktest(slot_column=..., day_column=...)` sets both from columns instead, independently of each other. This matters when one calendar day appears several times, e.g. in a bootstrap that draws tournament editions with replacement: each copy can get its own daily limit (`day_column`) while copies on the same date still settle together (one shared `slot_column` value) or one after another (one value per copy). The keys change only the grouping; metrics, CAGR, the order of the bankroll path, and CLV still use the real dates.
+By default the slot is the date value and the "day" of daily limits is the calendar day of the date. `PredictionBacktest(slot_column=..., day_column=...)` changes both, independently of each other. `slot_column` replaces the date value as the slot. `day_column` does not replace the date: a day becomes the pair (calendar day, key). This matters when one calendar day appears several times, e.g. in a bootstrap that draws tournament editions with replacement: with the copy number as day key, each copy gets its own daily limit, while copies on the same date still settle together (one shared `slot_column` value) or one after another (one value per copy). The keys change only the grouping; metrics, CAGR, the order of the bankroll path, and CLV still use the real dates.
 
 ```python
 one_day = pd.DataFrame({
@@ -168,4 +168,10 @@ print(backtest.detailed_results["bt_stake"].tolist())
 # [10.0, 10.0, 0.0, 0.0, 10.0, 10.0, 0.0, 0.0]: 2% of 1000 per copy; without day_column only the first two bets
 ```
 
-With a day key, `losing_streak_on` counts the losses at the end of the bets with that key, even if bets with other keys settled in between. After the run, `backtest.history` is back on calendar days; call `history.set_day_key(key)` to query one key.
+Details:
+
+- During the run, a strategy's day queries (`history.staked_on(date)`, `profit_on`, `bankroll_at_start_of`, `losing_streak_on`) use the key of the row being decided together with the calendar day of the `date` they pass, so a query for yesterday returns yesterday of the same copy. Strategies need no changes.
+- With a key, `losing_streak_on` counts the losses at the end of the bets of that (day, key), even if bets with other keys settled in between. Drawdown, bankroll, and the global `losing_streak` stay global over all rows.
+- A day that starts inside a simultaneous slot starts at the slot's opening bankroll, so `bankroll_at_start_of` (and `max_daily_fraction`) does not depend on the row order inside the slot.
+- After the run, pass the key explicitly: `backtest.history.staked_on("2024-03-01", key=2)`. Without `key=`, queries see only bets booked without a key, i.e. 0 (and the current bankroll for `bankroll_at_start_of`) after a run with `day_column`.
+- Keys are compared with `==`; keys that compare equal but differ in type (`1`, `1.0`, `True`) are rejected.

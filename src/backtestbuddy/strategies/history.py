@@ -19,16 +19,32 @@ counts the day's open exposure (as a live bettor would), and clears the
 open stakes once the slot settles and its bets are recorded. Results
 (profit, streaks, drawdown) stay unknown until then.
 
-Day queries and day totals use the calendar day of the date by default.
-``set_day_key`` replaces it with any hashable key, e.g. to give two
-copies of the same calendar day their own daily limits (the backtest
-does this with ``day_column``).
+Day keys: a "day" is the calendar day of the date by default. A bet can
+also carry a hashable ``key`` (the backtest passes the row's
+``day_column`` value); its day is then the pair (calendar day, key), so
+copies of one calendar day keep separate day totals. Queries take the
+same optional ``key``. During a backtest with ``day_column``, a query
+without ``key`` uses the key of the row being decided, so strategies
+need no changes. Drawdown, bankroll, and ``losing_streak`` stay global.
 """
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+
+
+def _check_day_key(key: Any) -> None:
+    """Raise if ``key`` cannot serve as a day key.
+
+    Raises:
+        TypeError: If ``key`` is not hashable.
+        ValueError: If ``key`` is NaN (NaN never equals itself, so its
+            bets could not be found again).
+    """
+    hash(key)
+    if key != key:
+        raise ValueError(f"A day key must not be NaN, got {key!r}")
 
 
 @dataclass(frozen=True)
@@ -80,44 +96,34 @@ class BetHistory:
         self._open_by_day: Dict[pd.Timestamp, float] = {}
         self._last_date: Any = None
         self._last_day: Optional[pd.Timestamp] = None
-        self._day_key: Any = None
-        self._streak_by_key: Dict[Any, int] = {}
+        # Day keys (see module docstring): key per bet (None without one), per-bucket streaks
+        self._bet_keys: List[Any] = []
+        self._streak_by_day: Dict[Any, int] = {}
+        self._row_key: Any = None
 
-    def set_day_key(self, key: Any) -> None:
-        """Use ``key`` instead of the calendar day for day totals and queries.
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        """Restore a pickled ledger, also one saved before day keys existed."""
+        self.__dict__.update(state)
+        self.__dict__.setdefault("_bet_keys", [None] * len(self._bets))
+        self.__dict__.setdefault("_streak_by_day", {})
+        self.__dict__.setdefault("_row_key", None)
 
-        Until the next call, ``record``, ``add_open_stake``, ``staked_on``,
-        ``profit_on``, ``bankroll_at_start_of``, and ``losing_streak_on``
-        all use ``key`` as the day and ignore the day of their ``date``
-        argument. Bets recorded under a key keep it. ``losing_streak_on``
-        then counts the consecutive losses at the end of the bets with that
-        key, even if bets with other keys were recorded in between.
-
-        Args:
-            key: Any hashable value, e.g. ``("2024-01-01", "copy 2")``.
-                ``None`` returns to calendar days.
-
-        Example:
-            After ``set_day_key(("2024-01-01", 2))``, ``staked_on("2024-01-01")``
-            returns only the stake recorded under that key, not the stake of
-            other copies of 2024-01-01.
-        """
-        if key is not None:
-            hash(key)  # fail here, not deep inside a later dict lookup
-        self._day_key = key
-
-    def _day(self, date: Any) -> Any:
-        """Day key of ``date``: the key set by ``set_day_key``, else the calendar day.
-
-        Consecutive calls with one date are cached.
-        """
-        if self._day_key is not None:
-            return self._day_key
+    def _day(self, date: Any) -> pd.Timestamp:
+        """Calendar day of ``date``; consecutive calls with one date are cached."""
         if date is self._last_date or (self._last_day is not None and date == self._last_date):
             return self._last_day
         day = pd.Timestamp(date).normalize()
         self._last_date, self._last_day = date, day
         return day
+
+    def _bucket(self, date: Any, key: Any) -> Any:
+        """Day bucket of a booking: the calendar day, or (calendar day, key)."""
+        day = self._day(date)
+        return day if key is None else (day, key)
+
+    def _query_bucket(self, date: Any, key: Any) -> Any:
+        """Day bucket of a query; without ``key`` the current row's key applies."""
+        return self._bucket(date, self._row_key if key is None else key)
 
     def record(
         self,
@@ -127,6 +133,9 @@ class BetHistory:
         bankroll_before: float,
         bankroll_after: float,
         won: Optional[bool] = None,
+        *,
+        key: Any = None,
+        day_start_bankroll: Optional[float] = None,
     ) -> None:
         """Add one settled bet and update the running totals.
 
@@ -137,7 +146,15 @@ class BetHistory:
             bankroll_before: Bankroll before the bet.
             bankroll_after: Bankroll after settlement.
             won: Result; inferred from ``profit > 0`` when omitted.
+            key: Optional day key; the bet's day is then (calendar day, key).
+            day_start_bankroll: Bankroll that starts the bet's day if this is
+                its first bet; defaults to ``bankroll_before``. The backtest
+                passes the slot's opening bankroll for simultaneous slots, so
+                the day start of a key does not depend on the row order
+                inside the slot.
         """
+        if key is not None:
+            _check_day_key(key)
         won = bool(profit > 0) if won is None else bool(won)
         bet = SettledBet(
             pd.Timestamp(date), float(stake), float(profit),
@@ -147,12 +164,14 @@ class BetHistory:
         self._bankroll = bet.bankroll_after
         self._peak = max(self._peak, bet.bankroll_after)
         self._losing_streak = 0 if won else self._losing_streak + 1
-        day = self._day(date)
-        self._day_start_bankroll.setdefault(day, bet.bankroll_before)
+        day = self._bucket(date, key)
+        start = bet.bankroll_before if day_start_bankroll is None else float(day_start_bankroll)
+        self._day_start_bankroll.setdefault(day, start)
         self._staked_by_day[day] = self._staked_by_day.get(day, 0.0) + bet.stake
         self._profit_by_day[day] = self._profit_by_day.get(day, 0.0) + bet.profit
-        if self._day_key is not None:
-            self._streak_by_key[day] = 0 if won else self._streak_by_key.get(day, 0) + 1
+        self._bet_keys.append(key)
+        if key is not None:
+            self._streak_by_day[day] = 0 if won else self._streak_by_day.get(day, 0) + 1
 
     @property
     def bets(self) -> List[SettledBet]:
@@ -191,7 +210,7 @@ class BetHistory:
         """Consecutive losses at the end of the history."""
         return self._losing_streak
 
-    def add_open_stake(self, date: Any, stake: float) -> None:
+    def add_open_stake(self, date: Any, stake: float, *, key: Any = None) -> None:
         """Register a placed stake whose match has not settled yet.
 
         Used for simultaneous slots: the stake counts in ``staked_on`` until
@@ -201,9 +220,12 @@ class BetHistory:
         Args:
             date: Match date.
             stake: Amount staked; non-positive stakes are ignored.
+            key: Optional day key, as in ``record``.
         """
         if stake > 0:
-            day = self._day(date)
+            if key is not None:
+                _check_day_key(key)
+            day = self._bucket(date, key)
             self._open_by_day[day] = self._open_by_day.get(day, 0.0) + float(stake)
 
     def clear_open_stakes(self) -> None:
@@ -215,31 +237,37 @@ class BetHistory:
         """Total of registered stakes that have not settled yet."""
         return sum(self._open_by_day.values())
 
-    def staked_on(self, date: Any) -> float:
-        """Total stake on the calendar day of ``date``: settled plus still open."""
-        day = self._day(date)
+    def staked_on(self, date: Any, key: Any = None) -> float:
+        """Total stake on the calendar day of ``date``: settled plus still open.
+
+        With ``key`` (or, inside a backtest with ``day_column``, the current
+        row's key) only the stakes booked under that key on that day count.
+        """
+        day = self._query_bucket(date, key)
         return self._staked_by_day.get(day, 0.0) + self._open_by_day.get(day, 0.0)
 
-    def profit_on(self, date: Any) -> float:
-        """Net profit of bets settled on the calendar day of ``date``."""
-        return self._profit_by_day.get(self._day(date), 0.0)
+    def profit_on(self, date: Any, key: Any = None) -> float:
+        """Net profit of bets settled on the calendar day of ``date`` (and ``key``)."""
+        return self._profit_by_day.get(self._query_bucket(date, key), 0.0)
 
-    def bankroll_at_start_of(self, date: Any) -> float:
-        """Bankroll before the first bet of that day, else the current one."""
-        return self._day_start_bankroll.get(self._day(date), self._bankroll)
+    def bankroll_at_start_of(self, date: Any, key: Any = None) -> float:
+        """Bankroll before the first bet of that day (and ``key``), else the current one."""
+        return self._day_start_bankroll.get(self._query_bucket(date, key), self._bankroll)
 
-    def losing_streak_on(self, date: Any) -> int:
+    def losing_streak_on(self, date: Any, key: Any = None) -> int:
         """Consecutive losses at the end of the history, counted within that day.
 
-        With a key from ``set_day_key``: consecutive losses at the end of
-        the bets recorded under that key.
+        With a key: consecutive losses at the end of the bets of that
+        (calendar day, key), even if bets of other keys settled in between.
+        Without a key only bets booked without a key count.
         """
+        key = self._row_key if key is None else key
+        if key is not None:
+            return self._streak_by_day.get(self._bucket(date, key), 0)
         day = self._day(date)
-        if self._day_key is not None:
-            return self._streak_by_key.get(day, 0)
         streak = 0
-        for bet in reversed(self._bets):
-            if self._day(bet.date) != day or bet.won:
+        for bet, bet_key in zip(reversed(self._bets), reversed(self._bet_keys)):
+            if bet_key is not None or self._day(bet.date) != day or bet.won:
                 break
             streak += 1
         return streak

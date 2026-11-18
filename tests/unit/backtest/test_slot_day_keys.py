@@ -45,7 +45,7 @@ def reference_input():
     NumPy versions may differ in the last bit of generated floats, so the exact
     comparison with 0.3.1 reads the inputs it was computed from.
     """
-    return pd.read_csv(REFERENCE_INPUT, parse_dates=["date"])
+    return pd.read_csv(REFERENCE_INPUT, parse_dates=["date"], float_precision="round_trip")
 
 
 def _kelly():
@@ -92,7 +92,7 @@ class TestDefaultsUnchanged:
     def reference(self):
         # Written by backtestbuddy 0.3.1 (commit 0cb9dd9) from REFERENCE_INPUT with
         # float_format="%.17g", so every float round-trips exactly
-        return pd.read_csv(REFERENCE_FILE, keep_default_na=False, na_values=[""])
+        return pd.read_csv(REFERENCE_FILE, keep_default_na=False, na_values=[""], float_precision="round_trip")
 
     @pytest.mark.parametrize("name,settle", SCENARIOS)
     def test_identical_to_031(self, reference, name, settle):

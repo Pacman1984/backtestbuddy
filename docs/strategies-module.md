@@ -292,8 +292,8 @@ A strategy that needs to remember anything reads the ledger instead of keeping i
 | `bankroll`, `peak_bankroll`, `drawdown` | Current bankroll, highest so far (including the start), fall below the peak as a fraction |
 | `n_bets`, `bets`, `last_bet` | Count, all settled bets, the most recent one (`SettledBet` with `date`, `stake`, `profit`, `bankroll_before`, `bankroll_after`, `won`) |
 | `losing_streak`, `losing_streak_on(date)` | Consecutive losses at the end, overall or within one day |
-| `staked_on(date)`, `profit_on(date)`, `bankroll_at_start_of(date)` | Per-calendar-day totals; `staked_on` includes stakes that are placed but not settled yet |
-| `add_open_stake(date, stake)`, `clear_open_stakes()`, `open_stake` | Register, clear, and sum placed-but-unsettled stakes (used for simultaneous slots; call them yourself if you replicate the slot flow outside a backtest) |
+| `staked_on(date)`, `profit_on(date)`, `bankroll_at_start_of(date)` | Per-calendar-day totals; `staked_on` includes stakes that are placed but not settled yet. All `*_on` queries take an optional `key=` for days split by a day key (see `day_column` in the [Backtest Module](backtest-module.md#slot-and-day-keys)) |
+| `add_open_stake(date, stake, key=None)`, `clear_open_stakes()`, `open_stake` | Register, clear, and sum placed-but-unsettled stakes (used for simultaneous slots; call them yourself if you replicate the slot flow outside a backtest). With a day key, pass it as `key=`, as for `record` |
 
 Example: a flat stake that halves after two losses in a row.
 

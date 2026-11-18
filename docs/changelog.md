@@ -2,6 +2,14 @@
 
 All notable changes to BacktestBuddy. Newest first.
 
+## Unreleased
+
+Upgrade notes: fully backward compatible. Without the new arguments results are identical to 0.3.1.
+
+**New features:**
+- **`PredictionBacktest(slot_column=None, day_column=None)`**: separate, optional keys for the settlement slot of `settle_simultaneous` and for the day of every day limit and day total of `BetHistory` (`max_daily_fraction`, `pause_after_losses`, `staked_on`, `profit_on`, `bankroll_at_start_of`, `losing_streak_on`). Defaults keep today's rules (equal date values; calendar day of the date). Dates stay real for every metric. Made for a bootstrap that draws tournament editions with replacement, where copies of one edition fall on the same calendar days but need their own daily limits, with or without settling together. A slot key needs `settle_simultaneous=True` and adjacent rows in date order; missing columns, missing values, and unhashable keys raise a `ValueError`.
+- **`BetHistory.set_day_key(key)`**: use any hashable key instead of the calendar day until the next call; with a key, `losing_streak_on` counts the trailing losses of the bets with that key.
+
 ## Version 0.3.1 (2026-10-28)
 
 Bug-fix release. Upgrade notes: no API changes; if you replicate the simultaneous slot flow outside a backtest, add the two `BetHistory` calls described below.

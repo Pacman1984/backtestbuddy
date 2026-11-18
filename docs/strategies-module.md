@@ -294,6 +294,7 @@ A strategy that needs to remember anything reads the ledger instead of keeping i
 | `losing_streak`, `losing_streak_on(date)` | Consecutive losses at the end, overall or within one day |
 | `staked_on(date)`, `profit_on(date)`, `bankroll_at_start_of(date)` | Per-calendar-day totals; `staked_on` includes stakes that are placed but not settled yet |
 | `add_open_stake(date, stake)`, `clear_open_stakes()`, `open_stake` | Register, clear, and sum placed-but-unsettled stakes (used for simultaneous slots; call them yourself if you replicate the slot flow outside a backtest) |
+| `set_day_key(key)` | Use `key` instead of the calendar day for every day total and day query until the next call; `None` returns to calendar days. The backtest calls it per row when `day_column` is set |
 
 Example: a flat stake that halves after two losses in a row.
 

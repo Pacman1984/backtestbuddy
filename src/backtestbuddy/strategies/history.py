@@ -18,6 +18,11 @@ before any of them settles. The backtest registers each placed stake with
 counts the day's open exposure (as a live bettor would), and clears the
 open stakes once the slot settles and its bets are recorded. Results
 (profit, streaks, drawdown) stay unknown until then.
+
+Day queries and day totals use the calendar day of the date by default.
+``set_day_key`` replaces it with any hashable key, e.g. to give two
+copies of the same calendar day their own daily limits (the backtest
+does this with ``day_column``).
 """
 
 from dataclasses import dataclass
@@ -75,9 +80,39 @@ class BetHistory:
         self._open_by_day: Dict[pd.Timestamp, float] = {}
         self._last_date: Any = None
         self._last_day: Optional[pd.Timestamp] = None
+        self._day_key: Any = None
+        self._streak_by_key: Dict[Any, int] = {}
 
-    def _day(self, date: Any) -> pd.Timestamp:
-        """Calendar day of ``date``; consecutive calls with one date are cached."""
+    def set_day_key(self, key: Any) -> None:
+        """Use ``key`` instead of the calendar day for day totals and queries.
+
+        Until the next call, ``record``, ``add_open_stake``, ``staked_on``,
+        ``profit_on``, ``bankroll_at_start_of``, and ``losing_streak_on``
+        all use ``key`` as the day and ignore the day of their ``date``
+        argument. Bets recorded under a key keep it. ``losing_streak_on``
+        then counts the consecutive losses at the end of the bets with that
+        key, even if bets with other keys were recorded in between.
+
+        Args:
+            key: Any hashable value, e.g. ``("2024-01-01", "copy 2")``.
+                ``None`` returns to calendar days.
+
+        Example:
+            After ``set_day_key(("2024-01-01", 2))``, ``staked_on("2024-01-01")``
+            returns only the stake recorded under that key, not the stake of
+            other copies of 2024-01-01.
+        """
+        if key is not None:
+            hash(key)  # fail here, not deep inside a later dict lookup
+        self._day_key = key
+
+    def _day(self, date: Any) -> Any:
+        """Day key of ``date``: the key set by ``set_day_key``, else the calendar day.
+
+        Consecutive calls with one date are cached.
+        """
+        if self._day_key is not None:
+            return self._day_key
         if date is self._last_date or (self._last_day is not None and date == self._last_date):
             return self._last_day
         day = pd.Timestamp(date).normalize()
@@ -116,6 +151,8 @@ class BetHistory:
         self._day_start_bankroll.setdefault(day, bet.bankroll_before)
         self._staked_by_day[day] = self._staked_by_day.get(day, 0.0) + bet.stake
         self._profit_by_day[day] = self._profit_by_day.get(day, 0.0) + bet.profit
+        if self._day_key is not None:
+            self._streak_by_key[day] = 0 if won else self._streak_by_key.get(day, 0) + 1
 
     @property
     def bets(self) -> List[SettledBet]:
@@ -192,8 +229,14 @@ class BetHistory:
         return self._day_start_bankroll.get(self._day(date), self._bankroll)
 
     def losing_streak_on(self, date: Any) -> int:
-        """Consecutive losses at the end of the history, counted within that day."""
+        """Consecutive losses at the end of the history, counted within that day.
+
+        With a key from ``set_day_key``: consecutive losses at the end of
+        the bets recorded under that key.
+        """
         day = self._day(date)
+        if self._day_key is not None:
+            return self._streak_by_key.get(day, 0)
         streak = 0
         for bet in reversed(self._bets):
             if self._day(bet.date) != day or bet.won:

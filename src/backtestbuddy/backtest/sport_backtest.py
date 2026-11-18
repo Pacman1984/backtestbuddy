@@ -135,7 +135,9 @@ class BaseBacktest(ABC):
                  closing_odds_columns: Optional[List[str]] = None,
                  odds_haircut: float = 0.0,
                  margin_method: str = "multiplicative",
-                 settle_simultaneous: bool = False):
+                 settle_simultaneous: bool = False,
+                 slot_column: Optional[str] = None,
+                 day_column: Optional[str] = None):
         """
         Initialize the BaseBacktest.
 
@@ -163,11 +165,23 @@ class BaseBacktest(ABC):
                 start of the slot, their total stake is capped at that bankroll, and they settle
                 together, so no bet can use the result of another match in the same slot.
                 Defaults to False (rows settle one after another).
+            slot_column (Optional[str]): Column whose values define the settlement slots of
+                ``settle_simultaneous`` instead of the date values: rows with the same key
+                form one slot. The rows of a slot must be adjacent after the stable sort by
+                ``date_column``. Requires ``settle_simultaneous=True``. Defaults to None
+                (rows with equal date values form a slot).
+            day_column (Optional[str]): Column whose values replace the calendar day of the
+                date for every day total and day query of ``BetHistory`` (e.g.
+                ``RiskLimits`` ``max_daily_fraction`` and ``pause_after_losses``). Defaults
+                to None (the calendar day of the date). Neither key changes the dates that
+                metrics use.
 
         Raises:
             ValueError: If closing odds columns are missing or do not match ``odds_columns``
-                in length, ``odds_haircut`` is outside ``[0, 1)``, or ``margin_method`` is
-                unknown.
+                in length, ``odds_haircut`` is outside ``[0, 1)``, ``margin_method`` is
+                unknown, or ``slot_column``/``day_column`` is missing, has missing or
+                unhashable values, or (slot) is used without ``settle_simultaneous`` or
+                has non-adjacent rows.
         """
         if closing_odds_columns is not None:
             if len(closing_odds_columns) != len(odds_columns):
@@ -197,6 +211,50 @@ class BaseBacktest(ABC):
         self.odds_haircut = odds_haircut
         self.margin_method = margin_method
         self.settle_simultaneous = settle_simultaneous
+        self.slot_column = slot_column
+        self.day_column = day_column
+        if slot_column is not None:
+            if not settle_simultaneous:
+                raise ValueError("slot_column requires settle_simultaneous=True")
+            self._check_key_column("slot_column", slot_column, adjacent=True)
+        if day_column is not None:
+            self._check_key_column("day_column", day_column, adjacent=False)
+
+    def _check_key_column(self, name: str, column: str, adjacent: bool) -> None:
+        """Validate a slot or day key column of the (date-sorted) data.
+
+        Args:
+            name: Parameter name for error messages.
+            column: Column holding the keys.
+            adjacent: Require the rows of each key to form one block.
+
+        Raises:
+            ValueError: If the column is missing, has missing or unhashable
+                values, or (``adjacent``) a key's rows are not one block.
+        """
+        if column not in self.data.columns:
+            raise ValueError(f"{name} '{column}' not found in the dataset.")
+        missing = int(self.data[column].isna().sum())
+        if missing:
+            raise ValueError(f"{name} '{column}' has missing values in {missing} rows; every row needs a key.")
+        keys = self.data[column].tolist()
+        try:
+            set(keys)
+        except TypeError as error:
+            raise ValueError(f"{name} '{column}' must hold hashable values: {error}") from None
+        if not adjacent:
+            return
+        seen = set()
+        for position, key in enumerate(keys):
+            if position and key == keys[position - 1]:
+                continue
+            if key in seen:
+                raise ValueError(
+                    f"{name} '{column}': the rows of slot {key!r} are not adjacent after the stable "
+                    f"sort by '{self.date_column}'. Rows of one slot must form one block in date "
+                    "order, e.g. put each slot's rows next to each other in the input."
+                )
+            seen.add(key)
 
     @abstractmethod
     def run(self) -> None:
@@ -428,15 +486,17 @@ class BaseBacktest(ABC):
         """Group rows into settlement slots.
 
         Sequential mode yields one row per slot. Simultaneous mode groups
-        consecutive rows with the same date value (rows are date-sorted).
+        consecutive rows with the same date value (rows are date-sorted),
+        or with the same ``slot_column`` key when one is set.
         """
         if not self.settle_simultaneous:
             for row in rows:
                 yield [row]
             return
+        keys = self._dates if self.slot_column is None else self.data[self.slot_column].tolist()
         slot: List[_BetRow] = []
         for row in rows:
-            if slot and self._dates[row.position] != self._dates[slot[0].position]:
+            if slot and keys[row.position] != keys[slot[0].position]:
                 yield slot
                 slot = []
             slot.append(row)
@@ -462,6 +522,8 @@ class BaseBacktest(ABC):
         current_bankroll = self.initial_bankroll
         bookie_bankroll = self.initial_bankroll
         adjust = getattr(self.strategy, "adjust_simultaneous", None)
+        # Optional day keys replace the calendar day in every BetHistory day total and query
+        day_keys = self.data[self.day_column].tolist() if self.day_column is not None else None
 
         for slot in self._slots(rows):
             simultaneous = self.settle_simultaneous
@@ -471,6 +533,8 @@ class BaseBacktest(ABC):
             # Decide every bet of the slot before any of them settles
             decisions = []
             for row in slot:
+                if day_keys is not None:
+                    history.set_day_key(day_keys[row.position])
                 stake, bet_on, additional_info = self.strategy.get_bet_details(
                     row.odds, slot_bankroll, model_probs=row.probs, prediction=row.prediction,
                     history=history, date=self._dates[row.position])
@@ -507,8 +571,9 @@ class BaseBacktest(ABC):
                     result['bt_sizing_bankroll'] = slot_bankroll
                 current_bankroll = result['bt_ending_bankroll']
                 if simultaneous:
-                    settled.append(result)
+                    settled.append((row, result))
                 else:
+                    # Sequential: the day key set for this row's decision still applies
                     self._record_bet(history, result)
                 all_results.add(result)
 
@@ -526,8 +591,14 @@ class BaseBacktest(ABC):
             # the settled stakes replace the open ones in history.staked_on()
             if simultaneous:
                 history.clear_open_stakes()
-            for result in settled:
+            for row, result in settled:
+                if day_keys is not None:
+                    history.set_day_key(day_keys[row.position])
                 self._record_bet(history, result)
+
+        if day_keys is not None:
+            # Back to calendar days; query a key after the run with history.set_day_key(key)
+            history.set_day_key(None)
 
         if lean:
             return all_results.to_frame(self.data.iloc[:len(rows), :0]), None, history
@@ -895,7 +966,9 @@ class PredictionBacktest(BaseBacktest):
                  closing_odds_columns: Optional[List[str]] = None,
                  odds_haircut: float = 0.0,
                  margin_method: str = "multiplicative",
-                 settle_simultaneous: bool = False):
+                 settle_simultaneous: bool = False,
+                 slot_column: Optional[str] = None,
+                 day_column: Optional[str] = None):
         """
         Initialize the PredictionBacktester.
 
@@ -916,13 +989,20 @@ class PredictionBacktest(BaseBacktest):
             odds_haircut (float): Fraction by which bet odds are lowered. Defaults to 0.
             margin_method (str): Margin removal method for metrics.
             settle_simultaneous (bool): Settle same-date rows as one slot. Defaults to False.
+            slot_column (Optional[str]): Rows with the same value in this column form one
+                settlement slot instead of rows with the same date value. Needs
+                ``settle_simultaneous=True``; a slot's rows must be adjacent in date order.
+                Defaults to None.
+            day_column (Optional[str]): Values of this column replace the calendar day for
+                daily limits and every other day state of ``BetHistory``. Defaults to None.
 
         Raises:
             ValueError: If the specified prediction_column is not found in the dataset.
             ValueError: If the strategy requires model probabilities but model_prob_columns is not provided.
         """
         super().__init__(data, odds_columns, outcome_column, date_column, initial_bankroll, None, strategy, None,
-                         closing_odds_columns, odds_haircut, margin_method, settle_simultaneous)
+                         closing_odds_columns, odds_haircut, margin_method, settle_simultaneous,
+                         slot_column, day_column)
         
         if prediction_column not in data.columns:
             raise ValueError(f"Prediction column '{prediction_column}' not found in the dataset.")

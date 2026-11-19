@@ -2,7 +2,7 @@
 
 All notable changes to BacktestBuddy. Newest first.
 
-## Unreleased
+## Version 0.3.2 (2026-11-19)
 
 Upgrade notes: fully backward compatible. Without the new arguments results are identical to 0.3.1.
 
